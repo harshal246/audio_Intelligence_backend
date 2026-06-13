@@ -1,11 +1,19 @@
 # Utility functions for password hashing and JWT token management.
 # Separating these from the API layer keeps concerns clean and testable.
+import uuid
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
-from jose import jwt
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from jose import JWTError, jwt
 from passlib.context import CryptContext
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.database.db import get_db
+from app.models.user import User
 
 # CryptContext manages bcrypt hashing — bcrypt is chosen because:
 # - It's deliberately slow (resists brute-force)
@@ -44,3 +52,48 @@ def create_refresh_token(data: dict) -> str:
     # "type": "refresh" prevents this token being used for API authorization
     to_encode.update({"exp": expire, "type": "refresh"})
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+
+
+security = HTTPBearer()
+
+
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db)
+) -> User:
+    """
+    Dependency to get the current authenticated user from JWT token.
+    
+    Args:
+        credentials: HTTP Bearer credentials
+        db: Database session
+    
+    Returns:
+        Current authenticated User object
+    
+    Raises:
+        HTTPException: If token is invalid or user not found
+    """
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    
+    try:
+        payload = jwt.decode(
+            credentials.credentials,
+            settings.SECRET_KEY,
+            algorithms=[settings.ALGORITHM]
+        )
+        user_id: str = payload.get("sub")
+        if user_id is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+    
+    user = db.execute(select(User).where(User.id == uuid.UUID(user_id))).scalar_one_or_none()
+    if user is None:
+        raise credentials_exception
+    
+    return user

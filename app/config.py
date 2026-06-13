@@ -15,6 +15,16 @@ class Settings(BaseSettings):
     # Longer-lived refresh token (7 days) — avoids forcing frequent re-login
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
+    # Audio processing settings
+    HF_TOKEN: str  # Hugging Face token for PyAnnote
+    MODEL_SIZE: str = "tiny"  # WhisperX model size
+    UPLOAD_DIR: str = "uploads"  # Directory for uploaded audio files
+    CHUNK_DIR: str = "chunks"  # Directory for audio chunks
+
+    # Google Gemini API for AI-powered summaries
+    GEMINI_API_KEY: str  # Google Gemini API key
+    GEMINI_MODEL: str = "gemini-2.5-flash"  # Model: gemini-2.5-flash (fast) or gemini-2.5-pro (quality)
+
     # Tell pydantic to read values from the .env file at project root
     model_config = {"env_file": ".env"}
 

@@ -4,8 +4,11 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
 
 from app.api.auth import router as auth_router
+from app.api.transcript import router as transcript_router
+from app.api.summary import router as summary_router
 from app.database.db import Base, engine
 from app.jobs.cleanup import clean_expired_revoked_tokens
+from app.middleware import TokenInfoMiddleware
 
 Base.metadata.create_all(bind=engine)
 
@@ -21,4 +24,11 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Audio Intelligence Platform", version="1.0.0", lifespan=lifespan)
+
+# Middleware: annotates service API responses with JWT token_info
+# Must be added BEFORE routers so it wraps the full handler chain
+app.add_middleware(TokenInfoMiddleware)
+
 app.include_router(auth_router)
+app.include_router(transcript_router)
+app.include_router(summary_router)
