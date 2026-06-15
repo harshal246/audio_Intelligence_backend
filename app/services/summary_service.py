@@ -287,48 +287,48 @@ def generate_preview_summary(transcripts: List[Transcript]) -> dict:
     combined_text = "\n".join(lines)
 
     prompt = f'''You are an intelligent audio analyst. Listen to the entire audio carefully.
-
+ 
 Return your response in EXACTLY this format (no extra text before or after):
-
+ 
 TITLE: <a concise title, maximum 5 words, no punctuation, no markdown>
-
+ 
 ---SUMMARY---
-
+ 
 Overview
 Write 2-3 concise sentences describing the overall purpose and context of the recording.
-
+ 
 Key Topics
 - Topic: Brief explanation
-
+ 
 (List every major topic. Do not invent topics.)
-
+ 
 Decisions Made
 - Decision
-
-(Include ONLY if decisions were actually made.)
-
+ 
+(OMIT this entire section, including the heading, if no decisions were made.)
+ 
 Action Items
 - Task — Owner — Deadline
-
-(Include ONLY if tasks were assigned. Never invent owner or deadline.)
-
+ 
+(OMIT this entire section, including the heading, if no tasks were assigned. Never invent owner or deadline.)
+ 
 Important Notes
 - Key facts, numbers, names, risks mentioned.
-
-(Include ONLY if such information exists.)
-
+ 
+(OMIT this entire section, including the heading, if no such information exists.)
+ 
 Follow-ups
 - Open questions or unresolved items.
-
-(Include ONLY if something remains unresolved.)
-
+ 
+(OMIT this entire section, including the heading, if nothing remains unresolved.)
+ 
 Rules:
 - Focus on WHAT was discussed, not WHO said it.
 - Do not fabricate any information.
+- Do not write "None", "N/A", or empty bullet points under any section.
 - Remove filler, greetings, repetitions.
 - Preserve exact numbers, names, and technical terms.
 - For personal notes or journals, summarize naturally without forcing meeting-style sections.
-
 Transcript:
 {combined_text}'''
 

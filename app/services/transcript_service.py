@@ -124,3 +124,65 @@ def format_transcript_output(segments: List[Dict]) -> str:
         full_transcript.append(line)
     
     return "\n".join(full_transcript)
+
+
+def save_simple_transcript(
+    db: Session,
+    user_id: UUID,
+    audio_filename: str,
+    segments: List[Dict],
+) -> List[Dict]:
+    """
+    Save a transcript (already built externally) to the database without
+    any diarization or speaker-assignment step.
+
+    Args:
+        db:             Active SQLAlchemy session
+        user_id:        Authenticated user's UUID
+        audio_filename: Label to store (original filename or a display name)
+        segments:       List of {speaker, start_time, end_time, text} dicts
+
+    Returns:
+        The same list of segments (echoed back for the HTTP response)
+    """
+    transcript = Transcript(
+        user_id=user_id,
+        audio_filename=audio_filename,
+        full_transcript_data=segments,
+    )
+    db.add(transcript)
+    db.commit()
+    logger.info("Simple transcript saved for user %s — %d segment(s)", user_id, len(segments))
+    return segments
+
+
+def transcribe_simple_audio(audio_path: str, audio_filename: str, user_id: UUID, db: Session) -> List[Dict]:
+    """
+    Transcribe audio with Gemini only — no diarization, no speaker labels.
+    Saves the result to the database immediately.
+
+    Args:
+        audio_path:     Path to the WAV file to transcribe
+        audio_filename: Original filename for the DB record
+        user_id:        Authenticated user's UUID
+        db:             Active SQLAlchemy session
+
+    Returns:
+        List of transcript segments (speaker always 'SPEAKER')
+    """
+    logger.info("Simple Gemini transcription (no diarization) for: %s", audio_filename)
+    result = transcribe_audio_gemini(audio_path)
+
+    segments = []
+    for seg in result.get("segments", []):
+        text = seg.get("text", "").strip()
+        if not text:
+            continue
+        segments.append({
+            "speaker": "SPEAKER",
+            "start_time": seg.get("start", 0.0),
+            "end_time": seg.get("end", 0.0),
+            "text": text,
+        })
+
+    return save_simple_transcript(db, user_id, audio_filename, segments)
