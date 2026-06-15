@@ -1,6 +1,9 @@
 # Transcript service - orchestrates the complete audio processing pipeline
+import logging
 import os
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 from typing import List, Dict
 from uuid import UUID
 
@@ -14,15 +17,16 @@ from app.services.whisper_service import (
     align_transcription,
     cleanup_gpu_memory
 )
+from app.services.gemini_service import transcribe_audio_gemini
 from app.services.diarization_service import diarize_audio, assign_speakers_to_segments
 
 
-def process_audio_pipeline(audio_path: str, user_id: UUID, db: Session, audio_filename: str) -> List[Dict]:
+def process_audio_pipeline(audio_path: str, user_id: UUID, db: Session, audio_filename: str, use_gemini: bool = False) -> List[Dict]:
     """
     Complete audio processing pipeline:
-    1. Transcribe audio with WhisperX
-    2. Align transcript for improved timestamps
-    3. Cleanup GPU memory
+    1. Transcribe audio with WhisperX or Gemini
+    2. Align transcript for improved timestamps (WhisperX only)
+    3. Cleanup GPU memory (WhisperX only)
     4. Perform speaker diarization
     5. Assign speakers to transcript segments
     6. Store in database
@@ -32,23 +36,31 @@ def process_audio_pipeline(audio_path: str, user_id: UUID, db: Session, audio_fi
         user_id: UUID of the user who uploaded the audio
         db: Database session
         audio_filename: Original filename of the uploaded audio
+        use_gemini: Whether to use Gemini for transcription instead of WhisperX
     
     Returns:
         List of transcript segments with speaker information
     """
     # Step 1: Transcribe audio
-    result = transcribe_audio(audio_path)
-    
-    # Step 2: Align transcript
-    result = align_transcription(result, audio_path)
-    
-    # Store models for cleanup
-    model = None  # Will be set by transcribe_audio if needed
-    model_a = None  # Will be set by align_transcription if needed
-    
-    # Step 3: Cleanup GPU memory before diarization
-    if model is not None or model_a is not None:
-        cleanup_gpu_memory(model, model_a)
+    if use_gemini:
+        logger.info("Using Gemini for transcription")
+        result = transcribe_audio_gemini(audio_path)
+        # Gemini doesn't have alignment, so we skip step 2
+        # Gemini doesn't use GPU memory, so we skip step 3
+    else:
+        logger.info("Using WhisperX for transcription")
+        result = transcribe_audio(audio_path)
+        
+        # Step 2: Align transcript
+        result = align_transcription(result, audio_path)
+        
+        # Store models for cleanup
+        model = None  # Will be set by transcribe_audio if needed
+        model_a = None  # Will be set by align_transcription if needed
+        
+        # Step 3: Cleanup GPU memory before diarization
+        if model is not None or model_a is not None:
+            cleanup_gpu_memory(model, model_a)
     
     # Step 4: Speaker diarization
     diarize_segments = diarize_audio(audio_path)

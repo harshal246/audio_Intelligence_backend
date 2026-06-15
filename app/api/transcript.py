@@ -15,11 +15,11 @@ from app.utils.auth import get_current_user
 router = APIRouter(prefix="/transcribe", tags=["transcript"])
 
 
-def background_audio_processing(audio_path: str, user_id, audio_filename: str):
+def background_audio_processing(audio_path: str, user_id, audio_filename: str, use_gemini: bool = False):
     """Wrapper to run the audio pipeline in the background with a dedicated DB session."""
     db = SessionLocal()
     try:
-        process_audio_pipeline(audio_path, user_id, db, audio_filename)
+        process_audio_pipeline(audio_path, user_id, db, audio_filename, use_gemini)
     except Exception as e:
         print(f"Background audio processing failed: {str(e)}")
     finally:
@@ -31,7 +31,8 @@ async def transcribe_audio(
     audio: UploadFile,
     background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    use_gemini: bool = False
 ):
     """
     Upload and transcribe audio file.
@@ -48,6 +49,7 @@ async def transcribe_audio(
         audio: WAV audio file upload
         current_user: Authenticated user (from JWT)
         db: Database session
+        use_gemini: Whether to use Gemini for transcription instead of WhisperX
     
     Returns:
         Dictionary with transcript segments and formatted output
@@ -104,7 +106,8 @@ async def transcribe_audio(
         background_audio_processing,
         final_path,
         current_user.id,
-        audio.filename
+        audio.filename,
+        use_gemini
     )
     
     return {
