@@ -82,7 +82,9 @@ def login(body: LoginRequest, db: Session = Depends(get_db)):
     except HTTPException:
         db.rollback()
         raise
-    except Exception:
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
         db.rollback()
         raise HTTPException(status_code=500, detail="Login failed")
 
