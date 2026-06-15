@@ -9,6 +9,7 @@ from app.api.summary import router as summary_router
 from app.database.db import Base, engine
 from app.jobs.cleanup import clean_expired_revoked_tokens
 from app.middleware import TokenInfoMiddleware
+from fastapi.middleware.cors import CORSMiddleware
 
 Base.metadata.create_all(bind=engine)
 
@@ -24,6 +25,15 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Audio Intelligence Platform", version="1.0.0", lifespan=lifespan)
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
+)
 
 # Middleware: annotates service API responses with JWT token_info
 # Must be added BEFORE routers so it wraps the full handler chain

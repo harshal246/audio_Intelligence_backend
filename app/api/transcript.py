@@ -1,9 +1,10 @@
 # Transcript API endpoints - handles audio upload and transcription
 import os
 from pathlib import Path
-from typing import List
+from typing import List, Dict
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, status, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, status, BackgroundTasks, WebSocket, WebSocketDisconnect
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -14,46 +15,68 @@ from app.utils.auth import get_current_user
 
 router = APIRouter(prefix="/transcribe", tags=["transcript"])
 
+class ConnectionManager:
+    def __init__(self):
+        # Maps user_id to a list of active websocket connections
+        self.active_connections: Dict[str, List[WebSocket]] = {}
 
-def background_audio_processing(audio_path: str, user_id, audio_filename: str, use_gemini: bool = False):
+    async def connect(self, websocket: WebSocket, user_id: str):
+        await websocket.accept()
+        if user_id not in self.active_connections:
+            self.active_connections[user_id] = []
+        self.active_connections[user_id].append(websocket)
+
+    def disconnect(self, websocket: WebSocket, user_id: str):
+        if user_id in self.active_connections and websocket in self.active_connections[user_id]:
+            self.active_connections[user_id].remove(websocket)
+            if not self.active_connections[user_id]:
+                del self.active_connections[user_id]
+
+    async def send_json_message(self, data: dict, user_id: str):
+        if user_id in self.active_connections:
+            # Need to create a copy of the list to safely iterate while items might be removed
+            for connection in list(self.active_connections[user_id]):
+                try:
+                    await connection.send_json(data)
+                except Exception:
+                    # Ignore errors like disconnected clients
+                    pass
+
+manager = ConnectionManager()
+
+async def background_audio_processing(audio_path: str, user_id, audio_filename: str, use_gemini: bool = False):
     """Wrapper to run the audio pipeline in the background with a dedicated DB session."""
-    db = SessionLocal()
-    try:
-        process_audio_pipeline(audio_path, user_id, db, audio_filename, use_gemini)
-    except Exception as e:
-        print(f"Background audio processing failed: {str(e)}")
-    finally:
-        db.close()
+    def _process():
+        db = SessionLocal()
+        try:
+            process_audio_pipeline(audio_path, user_id, db, audio_filename, use_gemini)
+            return True, None
+        except Exception as e:
+            print(f"Background audio processing failed: {str(e)}")
+            return False, str(e)
+        finally:
+            db.close()
+            
+    success, error = await run_in_threadpool(_process)
+    
+    # Notify via WebSocket
+    if success:
+        await manager.send_json_message(
+            {"status": "completed", "filename": audio_filename, "use_gemini": use_gemini},
+            str(user_id)
+        )
+    else:
+        await manager.send_json_message(
+            {"status": "failed", "filename": audio_filename, "use_gemini": use_gemini, "error": error},
+            str(user_id)
+        )
 
-
-@router.post("/", status_code=status.HTTP_202_ACCEPTED)
-async def transcribe_audio(
+async def handle_audio_upload(
     audio: UploadFile,
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-    use_gemini: bool = False
+    current_user: User,
+    use_gemini: bool
 ):
-    """
-    Upload and transcribe audio file.
-    
-    This endpoint:
-    1. Validates JWT token
-    2. Validates audio format
-    3. Saves audio file locally
-    4. Processes audio through WhisperX + diarization pipeline
-    5. Stores transcript in database
-    6. Returns diarized transcript
-    
-    Args:
-        audio: WAV audio file upload
-        current_user: Authenticated user (from JWT)
-        db: Database session
-        use_gemini: Whether to use Gemini for transcription instead of WhisperX
-    
-    Returns:
-        Dictionary with transcript segments and formatted output
-    """
     # Accept any audio format — validate it's not empty or a non-audio file by extension
     SUPPORTED_FORMATS = ('.wav', '.mp3', '.m4a', '.flac', '.ogg', '.aac', '.wma', '.webm', '.mp4')
     file_ext = Path(audio.filename).suffix.lower()
@@ -112,10 +135,35 @@ async def transcribe_audio(
     
     return {
         "status": "processing",
-        "message": "Audio uploaded successfully. Transcription is running in the background.",
+        "message": f"Audio uploaded successfully. Transcription ({'Gemini' if use_gemini else 'WhisperX'}) is running in the background.",
         "audio_filename": audio.filename
     }
 
+@router.post("/", status_code=status.HTTP_202_ACCEPTED)
+async def transcribe_audio(
+    audio: UploadFile,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    use_gemini: bool = False
+):
+    """
+    Upload and transcribe audio file.
+    By default, uses WhisperX + diarization pipeline.
+    """
+    return await handle_audio_upload(audio, background_tasks, current_user, use_gemini)
+
+@router.post("/gemini", status_code=status.HTTP_202_ACCEPTED)
+async def transcribe_audio_gemini_endpoint(
+    audio: UploadFile,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Upload and transcribe audio file specifically with Gemini.
+    """
+    return await handle_audio_upload(audio, background_tasks, current_user, use_gemini=True)
 
 @router.get("/", status_code=status.HTTP_200_OK)
 async def get_transcripts(
@@ -124,13 +172,6 @@ async def get_transcripts(
 ):
     """
     Get all transcripts for the current user.
-    
-    Args:
-        current_user: Authenticated user (from JWT)
-        db: Database session
-    
-    Returns:
-        List of transcript segments
     """
     from app.models.transcript import Transcript
     from sqlalchemy import select
@@ -151,3 +192,18 @@ async def get_transcripts(
             for t in transcripts
         ]
     }
+
+@router.websocket("/ws/{client_id}")
+async def websocket_endpoint(websocket: WebSocket, client_id: str):
+    """
+    WebSocket endpoint for real-time transcription status updates.
+    The client_id should ideally be the user's ID or a unique session token.
+    For production, you'd want to validate the token here as well.
+    """
+    await manager.connect(websocket, client_id)
+    try:
+        while True:
+            # Keep the connection open and wait for updates
+            data = await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(websocket, client_id)

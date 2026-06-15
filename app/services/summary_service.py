@@ -1,4 +1,5 @@
 # Summary service - handles AI-powered summary generation via Google Gemini
+# Also exposes a preview mode that returns formatted plain-text without DB writes
 import json
 import logging
 import re
@@ -258,3 +259,102 @@ def create_daily_summary(db: Session, user_id: UUID, target_date: date) -> Optio
     db.refresh(summary)
     logger.info("Created new summary for user %s on %s", user_id, target_date)
     return summary
+
+
+def generate_preview_summary(transcripts: List[Transcript]) -> dict:
+    """
+    Generate a formatted plain-text summary from a list of transcripts using the
+    structured analyst prompt. Nothing is written to the database.
+
+    Args:
+        transcripts: List of Transcript ORM objects for the requested date
+
+    Returns:
+        Dictionary with:
+            - "title"  : concise title extracted from the TITLE line (str)
+            - "summary": full formatted plain-text summary body (str)
+    """
+    # Build the combined transcript text
+    lines = []
+    for t in transcripts:
+        if isinstance(t.full_transcript_data, list):
+            for seg in t.full_transcript_data:
+                speaker = seg.get("speaker", "UNKNOWN")
+                text = seg.get("text", "").strip()
+                if text:
+                    lines.append(f"[{speaker}]: {text}")
+
+    combined_text = "\n".join(lines)
+
+    prompt = f'''You are an intelligent audio analyst. Listen to the entire audio carefully.
+
+Return your response in EXACTLY this format (no extra text before or after):
+
+TITLE: <a concise title, maximum 5 words, no punctuation, no markdown>
+
+---SUMMARY---
+
+Overview
+Write 2-3 concise sentences describing the overall purpose and context of the recording.
+
+Key Topics
+- Topic: Brief explanation
+
+(List every major topic. Do not invent topics.)
+
+Decisions Made
+- Decision
+
+(Include ONLY if decisions were actually made.)
+
+Action Items
+- Task — Owner — Deadline
+
+(Include ONLY if tasks were assigned. Never invent owner or deadline.)
+
+Important Notes
+- Key facts, numbers, names, risks mentioned.
+
+(Include ONLY if such information exists.)
+
+Follow-ups
+- Open questions or unresolved items.
+
+(Include ONLY if something remains unresolved.)
+
+Rules:
+- Focus on WHAT was discussed, not WHO said it.
+- Do not fabricate any information.
+- Remove filler, greetings, repetitions.
+- Preserve exact numbers, names, and technical terms.
+- For personal notes or journals, summarize naturally without forcing meeting-style sections.
+
+Transcript:
+{combined_text}'''
+
+    try:
+        model = genai.GenerativeModel(
+            model_name=settings.GEMINI_MODEL,
+            generation_config=genai.GenerationConfig(
+                temperature=0.2,
+                max_output_tokens=8192,
+            ),
+        )
+        response = model.generate_content(prompt)
+        raw_text = response.text.strip()
+
+        # Extract TITLE from the first line ("TITLE: Some Title Here")
+        title = "Untitled"
+        body = raw_text
+        first_line = raw_text.splitlines()[0] if raw_text else ""
+        if first_line.upper().startswith("TITLE:"):
+            title = first_line[len("TITLE:"):].strip()
+            # Remove the title line from the body to avoid duplication
+            body = raw_text[len(first_line):].strip()
+
+        logger.info("Preview summary generated — title: %s", title)
+        return {"title": title, "summary": body}
+
+    except Exception as e:
+        logger.error("Preview summary generation failed: %s", str(e))
+        raise

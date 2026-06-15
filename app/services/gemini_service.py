@@ -36,26 +36,36 @@ def transcribe_audio_gemini(audio_path: str) -> Dict:
                 "temperature": 0.1,
                 "max_output_tokens": 8192,
                 "response_mime_type": "application/json",
+                "response_schema": {
+                    "type": "object",
+                    "properties": {
+                        "language": {"type": "string"},
+                        "segments": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "text": {"type": "string"},
+                                    "start": {"type": "number", "description": "Start time in total seconds as a float (e.g. 60.5 for 1m0.5s)"},
+                                    "end": {"type": "number", "description": "End time in total seconds as a float (e.g. 63.2 for 1m3.2s)"}
+                                },
+                                "required": ["text", "start", "end"]
+                            }
+                        }
+                    },
+                    "required": ["language", "segments"]
+                }
             },
         )
 
         # Create prompt for transcription
         prompt = """
         You are an audio transcription assistant. Transcribe the following audio file.
-        Return the transcription as a JSON object with the following structure:
-        {
-            "language": "detected_language",
-            "segments": [
-                {
-                    "text": "transcribed_text",
-                    "start": 0.0,
-                    "end": 0.0
-                }
-            ]
-        }
+        Return the transcription as a JSON object matching the required schema.
 
         Note: Since this is a transcription task, please provide the actual transcribed text
-        and reasonable timestamps for each segment in seconds. Do NOT include speaker information.
+        and reasonable timestamps for each segment in total seconds. Do NOT include speaker information.
+        CRITICAL: The "start" and "end" timestamps MUST be valid floating point values in total seconds (e.g., 60.5 for 1 minute and 0.5 seconds). DO NOT use formatted strings or multiple decimals like 1.0.66.
         """
 
         logger.info("Uploading audio file to Gemini: %s", audio_path)

@@ -77,12 +77,41 @@ def assign_speakers_to_segments(diarize_segments: pd.DataFrame, result: dict):
         Transcription result with speaker labels assigned
     """
     print("Merging diarization with transcript...")
-    result = whisperx.assign_word_speakers(diarize_segments, result)
     
+    # Check if we have word-level timestamps (WhisperX)
+    has_words = False
+    if result.get("segments") and len(result["segments"]) > 0:
+        has_words = "words" in result["segments"][0]
+        
+    if has_words:
+        result = whisperx.assign_word_speakers(diarize_segments, result)
+    else:
+        # Custom segment-level overlap assignment for outputs without word timestamps (like Gemini)
+        for segment in result.get("segments", []):
+            seg_start = segment.get("start", 0)
+            seg_end = segment.get("end", 0)
+            
+            best_speaker = "UNKNOWN"
+            max_overlap = 0
+            
+            for _, diar_row in diarize_segments.iterrows():
+                diar_start = diar_row["start"]
+                diar_end = diar_row["end"]
+                
+                overlap_start = max(seg_start, diar_start)
+                overlap_end = min(seg_end, diar_end)
+                overlap = max(0, overlap_end - overlap_start)
+                
+                if overlap > max_overlap:
+                    max_overlap = overlap
+                    best_speaker = diar_row["speaker"]
+            
+            segment["speaker"] = best_speaker
+            
     # Extract unique speakers
     speakers = sorted({
         seg.get("speaker", "UNKNOWN")
-        for seg in result["segments"]
+        for seg in result.get("segments", [])
         if seg.get("speaker")
     })
     print(f"Speakers detected: {len(speakers)}")
