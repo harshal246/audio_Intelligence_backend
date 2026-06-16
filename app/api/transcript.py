@@ -12,7 +12,7 @@ from app.database.db import get_db, SessionLocal
 from app.models.user import User
 from app.services.transcript_service import process_audio_pipeline, format_transcript_output, save_simple_transcript, transcribe_simple_audio
 from app.services.summary_service import generate_preview_summary
-from app.utils.auth import get_current_user
+from app.utils.auth import get_default_user
 
 router = APIRouter(prefix="/transcribe", tags=["transcript"])
 
@@ -144,7 +144,7 @@ async def handle_audio_upload(
 async def transcribe_audio(
     audio: UploadFile,
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_default_user),
     db: Session = Depends(get_db),
     use_gemini: bool = False
 ):
@@ -158,7 +158,7 @@ async def transcribe_audio(
 async def transcribe_audio_gemini_endpoint(
     audio: UploadFile,
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_default_user),
     db: Session = Depends(get_db)
 ):
     """
@@ -168,7 +168,7 @@ async def transcribe_audio_gemini_endpoint(
 
 @router.get("/", status_code=status.HTTP_200_OK)
 async def get_transcripts(
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_default_user),
     db: Session = Depends(get_db)
 ):
     """
@@ -216,7 +216,7 @@ async def transcribe_simple(
     transcript_text: Optional[str] = Form(default=None),
     audio_filename: Optional[str] = Form(default=None),
     generate_summary: bool = Query(default=False, description="If true, generate a preview summary after saving and return it in the same response."),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_default_user),
     db: Session = Depends(get_db),
 ):
     """

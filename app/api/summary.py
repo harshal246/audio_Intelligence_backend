@@ -8,14 +8,14 @@ from sqlalchemy.orm import Session
 from app.database.db import get_db
 from app.models.user import User
 from app.services.summary_service import create_daily_summary, get_daily_transcripts, generate_preview_summary
-from app.utils.auth import get_current_user
+from app.utils.auth import get_default_user
 
 router = APIRouter(prefix="/summary", tags=["summary"])
 
 
 @router.get("/", status_code=status.HTTP_200_OK)
 async def get_summaries(
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_default_user),
     db: Session = Depends(get_db)
 ):
     """
@@ -56,7 +56,7 @@ async def get_summaries(
 @router.post("/generate", status_code=status.HTTP_200_OK)
 async def generate_summary(
     target_date: date = Query(..., description="Date to generate summary for (YYYY-MM-DD)"),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_default_user),
     db: Session = Depends(get_db)
 ):
     """
@@ -97,7 +97,7 @@ async def generate_summary(
 @router.post("/preview", status_code=status.HTTP_200_OK)
 async def preview_summary(
     target_date: date = Query(..., description="Date to preview summary for (YYYY-MM-DD)"),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_default_user),
     db: Session = Depends(get_db)
 ):
     """
