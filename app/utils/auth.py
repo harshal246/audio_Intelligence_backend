@@ -63,16 +63,6 @@ def get_current_user(
 ) -> User:
     """
     Dependency to get the current authenticated user from JWT token.
-    
-    Args:
-        credentials: HTTP Bearer credentials
-        db: Database session
-    
-    Returns:
-        Current authenticated User object
-    
-    Raises:
-        HTTPException: If token is invalid or user not found
     """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
