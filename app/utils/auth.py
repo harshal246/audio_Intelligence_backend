@@ -87,16 +87,3 @@ def get_current_user(
         raise credentials_exception
     
     return user
-
-def get_default_user(db: Session = Depends(get_db)) -> User:
-    """
-    Dependency to get a default user without any authentication.
-    Creates a dummy user if none exists.
-    """
-    user = db.execute(select(User)).scalars().first()
-    if not user:
-        user = User(email="dummy_no_auth@example.com", password_hash="dummy")
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-    return user
