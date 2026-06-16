@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 from typing import List, Dict, Optional
 
-from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile, File, status, BackgroundTasks, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, UploadFile, File, status, BackgroundTasks, WebSocket, WebSocketDisconnect
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 
@@ -11,6 +11,7 @@ from app.config import settings
 from app.database.db import get_db, SessionLocal
 from app.models.user import User
 from app.services.transcript_service import process_audio_pipeline, format_transcript_output, save_simple_transcript, transcribe_simple_audio
+from app.services.summary_service import generate_preview_summary
 from app.utils.auth import get_current_user
 
 router = APIRouter(prefix="/transcribe", tags=["transcript"])
@@ -214,6 +215,7 @@ async def transcribe_simple(
     audio: Optional[UploadFile] = File(default=None),
     transcript_text: Optional[str] = Form(default=None),
     audio_filename: Optional[str] = Form(default=None),
+    generate_summary: bool = Query(default=False, description="If true, generate a preview summary after saving and return it in the same response."),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -224,9 +226,9 @@ async def transcribe_simple(
     - **audio** (file):          Uploads audio, transcribes via Gemini, saves to DB.
     - **transcript_text** (str): Saves the provided plain text directly to DB.
 
-    Optional field:
-    - **audio_filename** (str):  Display name used when saving a text-only transcript.
-                                  Defaults to 'manual_entry.txt' when omitted.
+    Optional fields:
+    - **audio_filename** (str):   Display name for text-only transcripts. Defaults to 'manual_entry.txt'.
+    - **generate_summary** (bool): If true, generates a preview summary and returns it in the same response.
     """
     if audio is None and not transcript_text:
         raise HTTPException(
@@ -257,7 +259,6 @@ async def transcribe_simple(
         with open(original_path, "wb") as f:
             f.write(content)
 
-        # Convert to WAV if needed
         if file_ext != '.wav':
             try:
                 from pydub import AudioSegment
@@ -275,18 +276,25 @@ async def transcribe_simple(
         else:
             final_path = str(original_path)
 
-        # Transcribe via Gemini (synchronous — no diarization)
         segments = await run_in_threadpool(
             transcribe_simple_audio, final_path, audio.filename, current_user.id, db
         )
 
-        return {
+        response = {
             "status": "success",
             "message": "Audio transcribed and saved (no diarization).",
             "audio_filename": audio.filename,
             "segment_count": len(segments),
             "segments": segments,
         }
+
+        if generate_summary:
+            from types import SimpleNamespace
+            mock_t = SimpleNamespace(full_transcript_data=segments)
+            summary_result = await run_in_threadpool(generate_preview_summary, [mock_t])
+            response["summary"] = summary_result
+
+        return response
 
     # ── PATH B: raw text from frontend ───────────────────────────────────────
     label = audio_filename or "manual_entry.txt"
@@ -300,10 +308,18 @@ async def transcribe_simple(
     ]
     await run_in_threadpool(save_simple_transcript, db, current_user.id, label, segments)
 
-    return {
+    response = {
         "status": "success",
         "message": "Transcript text saved to database.",
         "audio_filename": label,
         "segment_count": 1,
         "segments": segments,
     }
+
+    if generate_summary:
+        from types import SimpleNamespace
+        mock_t = SimpleNamespace(full_transcript_data=segments)
+        summary_result = await run_in_threadpool(generate_preview_summary, [mock_t])
+        response["summary"] = summary_result
+
+    return response
