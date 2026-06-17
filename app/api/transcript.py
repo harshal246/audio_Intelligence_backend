@@ -22,6 +22,7 @@ async def transcribe_simple(
     audio: Optional[UploadFile] = File(default=None),
     transcript_text: Optional[str] = Form(default=None),
     audio_filename: Optional[str] = Form(default=None),
+    transcript_id: Optional[str] = Query(default=None, description="Optional ID of an existing transcript to append to"),
     generate_summary: bool = Query(default=False, description="If true, generate a preview summary after saving and return it in the same response."),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -83,14 +84,17 @@ async def transcribe_simple(
         else:
             final_path = str(original_path)
 
-        segments = await run_in_threadpool(
-            transcribe_simple_audio, final_path, audio.filename, current_user.id, db
+        result_data = await run_in_threadpool(
+            transcribe_simple_audio, final_path, audio.filename, current_user.id, db, transcript_id
         )
+        segments = result_data["segments"]
+        saved_transcript_id = result_data["transcript_id"]
 
         response = {
             "status": "success",
             "message": "Audio transcribed and saved (no diarization).",
             "audio_filename": audio.filename,
+            "transcript_id": saved_transcript_id,
             "segment_count": len(segments),
             "segments": segments,
         }
@@ -113,14 +117,17 @@ async def transcribe_simple(
             "text": transcript_text.strip(),
         }
     ]
-    await run_in_threadpool(save_simple_transcript, db, current_user.id, label, segments)
+    result_data = await run_in_threadpool(save_simple_transcript, db, current_user.id, label, segments, transcript_id)
+    saved_segments = result_data["segments"]
+    saved_transcript_id = result_data["transcript_id"]
 
     response = {
         "status": "success",
         "message": "Transcript text saved to database.",
         "audio_filename": label,
-        "segment_count": 1,
-        "segments": segments,
+        "transcript_id": saved_transcript_id,
+        "segment_count": len(saved_segments),
+        "segments": saved_segments,
     }
 
     if generate_summary:

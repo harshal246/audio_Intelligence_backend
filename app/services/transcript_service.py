@@ -131,32 +131,50 @@ def save_simple_transcript(
     user_id: UUID,
     audio_filename: str,
     segments: List[Dict],
-) -> List[Dict]:
+    transcript_id: str = None,
+) -> Dict:
     """
     Save a transcript (already built externally) to the database without
-    any diarization or speaker-assignment step.
+    any diarization or speaker-assignment step. Appends if transcript_id is provided.
 
     Args:
         db:             Active SQLAlchemy session
         user_id:        Authenticated user's UUID
         audio_filename: Label to store (original filename or a display name)
         segments:       List of {speaker, start_time, end_time, text} dicts
+        transcript_id:  Optional ID of an existing transcript to append to
 
     Returns:
-        The same list of segments (echoed back for the HTTP response)
+        Dict containing transcript_id and the full segments list
     """
-    transcript = Transcript(
-        user_id=user_id,
-        audio_filename=audio_filename,
-        full_transcript_data=segments,
-    )
-    db.add(transcript)
-    db.commit()
-    logger.info("Simple transcript saved for user %s — %d segment(s)", user_id, len(segments))
-    return segments
+    transcript = None
+    if transcript_id:
+        transcript = db.query(Transcript).filter(
+            Transcript.id == transcript_id,
+            Transcript.user_id == user_id
+        ).first()
+
+    if transcript:
+        existing_data = transcript.full_transcript_data or []
+        transcript.full_transcript_data = existing_data + segments
+        from sqlalchemy.orm.attributes import flag_modified
+        flag_modified(transcript, "full_transcript_data")
+        db.commit()
+        logger.info("Appended %d segment(s) to transcript %s", len(segments), transcript_id)
+        return {"transcript_id": str(transcript.id), "segments": transcript.full_transcript_data}
+    else:
+        transcript = Transcript(
+            user_id=user_id,
+            audio_filename=audio_filename,
+            full_transcript_data=segments,
+        )
+        db.add(transcript)
+        db.commit()
+        logger.info("Simple transcript saved for user %s — %d segment(s)", user_id, len(segments))
+        return {"transcript_id": str(transcript.id), "segments": segments}
 
 
-def transcribe_simple_audio(audio_path: str, audio_filename: str, user_id: UUID, db: Session) -> List[Dict]:
+def transcribe_simple_audio(audio_path: str, audio_filename: str, user_id: UUID, db: Session, transcript_id: str = None) -> Dict:
     """
     Transcribe audio with Gemini only — no diarization, no speaker labels.
     Saves the result to the database immediately.
@@ -166,9 +184,10 @@ def transcribe_simple_audio(audio_path: str, audio_filename: str, user_id: UUID,
         audio_filename: Original filename for the DB record
         user_id:        Authenticated user's UUID
         db:             Active SQLAlchemy session
+        transcript_id:  Optional ID of an existing transcript to append to
 
     Returns:
-        List of transcript segments (speaker always 'SPEAKER')
+        Dict containing transcript_id and the full segments list
     """
     logger.info("Simple Gemini transcription (no diarization) for: %s", audio_filename)
     result = transcribe_audio_gemini(audio_path)
@@ -185,4 +204,4 @@ def transcribe_simple_audio(audio_path: str, audio_filename: str, user_id: UUID,
             "text": text,
         })
 
-    return save_simple_transcript(db, user_id, audio_filename, segments)
+    return save_simple_transcript(db, user_id, audio_filename, segments, transcript_id)
