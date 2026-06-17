@@ -13,6 +13,7 @@ class Transcript(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    title = Column(String(255), nullable=False)
     audio_filename = Column(String, nullable=False)
     full_transcript_data = Column(JSON, nullable=False)
     processing_timestamp = Column(DateTime(timezone=True), server_default=func.now())
