@@ -17,10 +17,60 @@ from app.utils.auth import get_current_user
 router = APIRouter(prefix="/transcribe", tags=["transcript"])
 
 
+from app.models.transcript import Transcript
+from app.models.summary import Summary
+
+@router.get("/", status_code=status.HTTP_200_OK)
+async def get_transcripts(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Retrieve all transcripts for the current user.
+    Includes the transcript's summary IF a custom summary was generated 
+    specifically (and only) for this transcript.
+    """
+    transcripts = db.query(Transcript).filter(
+        Transcript.user_id == current_user.id
+    ).order_by(Transcript.processing_timestamp.desc()).all()
+
+    summaries = db.query(Summary).filter(
+        Summary.user_id == current_user.id,
+        Summary.transcript_ids.isnot(None)
+    ).all()
+    
+    summary_map = {}
+    for s in summaries:
+        if s.transcript_ids and len(s.transcript_ids) == 1:
+            summary_map[str(s.transcript_ids[0])] = {
+                "summary_id": str(s.id),
+                "title": s.title,
+                "summary_text": s.summary_text,
+                "created_at": s.created_at.isoformat() if s.created_at else None
+            }
+
+    result = []
+    for t in transcripts:
+        t_id = str(t.id)
+        result.append({
+            "transcript_id": t_id,
+            "title": t.title,
+            "processing_timestamp": t.processing_timestamp.isoformat() if t.processing_timestamp else None,
+            "summary": summary_map.get(t_id)
+        })
+
+    return {
+        "status": "success",
+        "count": len(result),
+        "transcripts": result
+    }
+
+
 @router.post("/simple", status_code=status.HTTP_201_CREATED)
 async def transcribe_simple(
+    title: str = Form(...),
+    transcript_text: str = Form(...),
     audio: Optional[UploadFile] = File(default=None),
-    transcript_text: Optional[str] = Form(default=None),
     audio_filename: Optional[str] = Form(default=None),
     transcript_id: Optional[str] = Query(default=None, description="Optional ID of an existing transcript to append to"),
     generate_summary: bool = Query(default=False, description="If true, generate a preview summary after saving and return it in the same response."),
@@ -38,11 +88,6 @@ async def transcribe_simple(
     - **audio_filename** (str):   Display name for text-only transcripts. Defaults to 'manual_entry.txt'.
     - **generate_summary** (bool): If true, generates a preview summary and returns it in the same response.
     """
-    if audio is None and not transcript_text:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Supply either an 'audio' file or 'transcript_text' — not both empty.",
-        )
 
     # ── PATH A: audio file ────────────────────────────────────────────────────
     if audio is not None:
@@ -85,7 +130,7 @@ async def transcribe_simple(
             final_path = str(original_path)
 
         result_data = await run_in_threadpool(
-            transcribe_simple_audio, final_path, audio.filename, current_user.id, db, transcript_id
+            transcribe_simple_audio, final_path, audio.filename, current_user.id, db, transcript_id, title
         )
         segments = result_data["segments"]
         saved_transcript_id = result_data["transcript_id"]
@@ -117,7 +162,7 @@ async def transcribe_simple(
             "text": transcript_text.strip(),
         }
     ]
-    result_data = await run_in_threadpool(save_simple_transcript, db, current_user.id, label, segments, transcript_id)
+    result_data = await run_in_threadpool(save_simple_transcript, db, current_user.id, label, segments, transcript_id, title)
     saved_segments = result_data["segments"]
     saved_transcript_id = result_data["transcript_id"]
 

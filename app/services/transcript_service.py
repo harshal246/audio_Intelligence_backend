@@ -132,6 +132,7 @@ def save_simple_transcript(
     audio_filename: str,
     segments: List[Dict],
     transcript_id: str = None,
+    title: str = "Untitled Transcript",
 ) -> Dict:
     """
     Save a transcript (already built externally) to the database without
@@ -165,6 +166,7 @@ def save_simple_transcript(
     else:
         transcript = Transcript(
             user_id=user_id,
+            title=title,
             audio_filename=audio_filename,
             full_transcript_data=segments,
         )
@@ -174,7 +176,7 @@ def save_simple_transcript(
         return {"transcript_id": str(transcript.id), "segments": segments}
 
 
-def transcribe_simple_audio(audio_path: str, audio_filename: str, user_id: UUID, db: Session, transcript_id: str = None) -> Dict:
+def transcribe_simple_audio(audio_path: str, audio_filename: str, user_id: UUID, db: Session, transcript_id: str = None, title: str = "Untitled Transcript") -> Dict:
     """
     Transcribe audio with Gemini only — no diarization, no speaker labels.
     Saves the result to the database immediately.
@@ -204,4 +206,4 @@ def transcribe_simple_audio(audio_path: str, audio_filename: str, user_id: UUID,
             "text": text,
         })
 
-    return save_simple_transcript(db, user_id, audio_filename, segments, transcript_id)
+    return save_simple_transcript(db, user_id, audio_filename, segments, transcript_id, title)
