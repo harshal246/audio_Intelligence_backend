@@ -68,8 +68,8 @@ async def get_transcripts(
 
 @router.post("/simple", status_code=status.HTTP_201_CREATED)
 async def transcribe_simple(
-    title: str = Form(...),
-    transcript_text: str = Form(...),
+    title: Optional[str] = Form(default=None),
+    transcript_text: Optional[str] = Form(default=None),
     audio: Optional[UploadFile] = File(default=None),
     audio_filename: Optional[str] = Form(default=None),
     transcript_id: Optional[str] = Query(default=None, description="Optional ID of an existing transcript to append to"),
@@ -85,8 +85,9 @@ async def transcribe_simple(
     - **transcript_text** (str): Saves the provided plain text directly to DB.
 
     Optional fields:
+    - **title** (str):            Optional title. If missing, one is extracted automatically.
     - **audio_filename** (str):   Display name for text-only transcripts. Defaults to 'manual_entry.txt'.
-    - **generate_summary** (bool): If true, generates a preview summary and returns it in the same response.
+    - **generate_summary** (bool): If true, generates a summary and saves it to the database.
     """
 
     # ── PATH A: audio file ────────────────────────────────────────────────────
@@ -130,7 +131,7 @@ async def transcribe_simple(
             final_path = str(original_path)
 
         result_data = await run_in_threadpool(
-            transcribe_simple_audio, final_path, audio.filename, current_user.id, db, transcript_id, title
+            transcribe_simple_audio, final_path, audio.filename, current_user.id, db, transcript_id, title or "Untitled Transcript"
         )
         segments = result_data["segments"]
         saved_transcript_id = result_data["transcript_id"]
@@ -144,41 +145,70 @@ async def transcribe_simple(
             "segments": segments,
         }
 
-        if generate_summary:
-            from types import SimpleNamespace
-            mock_t = SimpleNamespace(full_transcript_data=segments)
-            summary_result = await run_in_threadpool(generate_preview_summary, [mock_t])
-            response["summary"] = summary_result
-
-        return response
-
     # ── PATH B: raw text from frontend ───────────────────────────────────────
-    label = audio_filename or "manual_entry.txt"
-    segments = [
-        {
-            "speaker": "SPEAKER",
-            "start_time": 0.0,
-            "end_time": 0.0,
-            "text": transcript_text.strip(),
+    elif transcript_text is not None:
+        label = audio_filename or "manual_entry.txt"
+        segments = [
+            {
+                "speaker": "SPEAKER",
+                "start_time": 0.0,
+                "end_time": 0.0,
+                "text": transcript_text.strip(),
+            }
+        ]
+        result_data = await run_in_threadpool(save_simple_transcript, db, current_user.id, label, segments, transcript_id, title or "Untitled Transcript")
+        saved_segments = result_data["segments"]
+        saved_transcript_id = result_data["transcript_id"]
+
+        response = {
+            "status": "success",
+            "message": "Transcript text saved to database.",
+            "audio_filename": label,
+            "transcript_id": saved_transcript_id,
+            "segment_count": len(saved_segments),
+            "segments": saved_segments,
         }
-    ]
-    result_data = await run_in_threadpool(save_simple_transcript, db, current_user.id, label, segments, transcript_id, title)
-    saved_segments = result_data["segments"]
-    saved_transcript_id = result_data["transcript_id"]
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Must provide either audio file or transcript_text",
+        )
 
-    response = {
-        "status": "success",
-        "message": "Transcript text saved to database.",
-        "audio_filename": label,
-        "transcript_id": saved_transcript_id,
-        "segment_count": len(saved_segments),
-        "segments": saved_segments,
-    }
-
-    if generate_summary:
+    # ── Summary & Title Extraction ───────────────────────────────────────────
+    if generate_summary or title is None:
+        import uuid
         from types import SimpleNamespace
         mock_t = SimpleNamespace(full_transcript_data=segments)
         summary_result = await run_in_threadpool(generate_preview_summary, [mock_t])
-        response["summary"] = summary_result
+        
+        extracted_title = summary_result["title"]
+        
+        # Update Transcript title in DB if user did not provide one
+        if title is None:
+            t_record = db.query(Transcript).filter(Transcript.id == saved_transcript_id).first()
+            if t_record:
+                t_record.title = extracted_title
+                db.commit()
+            
+            response["extracted_title"] = extracted_title
+
+        # Save Summary to DB if requested
+        if generate_summary:
+            new_summary = Summary(
+                user_id=current_user.id,
+                summary_date=None,
+                transcript_ids=[uuid.UUID(saved_transcript_id)],
+                title=title or extracted_title,
+                summary_text=summary_result["summary"]
+            )
+            db.add(new_summary)
+            db.commit()
+            db.refresh(new_summary)
+            
+            response["summary"] = {
+                "summary_id": str(new_summary.id),
+                "title": new_summary.title,
+                "summary_text": new_summary.summary_text
+            }
 
     return response
