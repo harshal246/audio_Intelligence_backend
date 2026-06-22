@@ -68,8 +68,8 @@ async def get_transcripts(
 
 @router.post("/simple", status_code=status.HTTP_201_CREATED)
 async def transcribe_simple(
-    title: str = Form(...),
-    transcript_text: str = Form(...),
+    title: Optional[str] = Form(default=None),
+    transcript_text: Optional[str] = Form(default=None),
     audio: Optional[UploadFile] = File(default=None),
     audio_filename: Optional[str] = Form(default=None),
     transcript_id: Optional[str] = Query(default=None, description="Optional ID of an existing transcript to append to"),
@@ -88,6 +88,10 @@ async def transcribe_simple(
     - **audio_filename** (str):   Display name for text-only transcripts. Defaults to 'manual_entry.txt'.
     - **generate_summary** (bool): If true, generates a preview summary and returns it in the same response.
     """
+
+    # Apply defaults for optional fields
+    title = title or "Untitled Transcript"
+    transcript_text = transcript_text or ""
 
     # ── PATH A: audio file ────────────────────────────────────────────────────
     if audio is not None:
@@ -144,11 +148,27 @@ async def transcribe_simple(
             "segments": segments,
         }
 
+        # if generate_summary:
+        #     from types import SimpleNamespace
+        #     mock_t = SimpleNamespace(full_transcript_data=segments)
+        #     summary_result = await run_in_threadpool(generate_preview_summary, [mock_t])
+        #     response["summary"] = summary_result
+
         if generate_summary:
             from types import SimpleNamespace
             mock_t = SimpleNamespace(full_transcript_data=segments)
             summary_result = await run_in_threadpool(generate_preview_summary, [mock_t])
             response["summary"] = summary_result
+
+            # ── Update transcript title in DB ─────────────────────────────────────
+            generated_title = summary_result.get("title", "").strip()
+            if generated_title and generated_title.lower() != "untitled":
+                transcript_obj = db.query(Transcript).filter(
+                    Transcript.id == saved_transcript_id
+                ).first()
+                if transcript_obj:
+                    transcript_obj.title = generated_title
+                    db.commit()
 
         return response
 
@@ -175,10 +195,26 @@ async def transcribe_simple(
         "segments": saved_segments,
     }
 
+    # if generate_summary:
+    #     from types import SimpleNamespace
+    #     mock_t = SimpleNamespace(full_transcript_data=segments)
+    #     summary_result = await run_in_threadpool(generate_preview_summary, [mock_t])
+    #     response["summary"] = summary_result
+
     if generate_summary:
         from types import SimpleNamespace
         mock_t = SimpleNamespace(full_transcript_data=segments)
         summary_result = await run_in_threadpool(generate_preview_summary, [mock_t])
         response["summary"] = summary_result
+
+        # ── Update transcript title in DB ─────────────────────────────────────
+        generated_title = summary_result.get("title", "").strip()
+        if generated_title and generated_title.lower() != "untitled":
+            transcript_obj = db.query(Transcript).filter(
+                Transcript.id == saved_transcript_id
+            ).first()
+            if transcript_obj:
+                transcript_obj.title = generated_title
+                db.commit()
 
     return response
