@@ -106,10 +106,38 @@ def create_daily_summary(db: Session, user_id: UUID, target_date: date) -> Optio
 def create_custom_summary(db: Session, user_id: UUID, transcript_ids: List[UUID]) -> Optional[Summary]:
     """
     Create a custom summary based on specific transcript IDs.
+
+    If a summary already exists for this user where the stored transcript_ids
+    are an exact match (all IDs match, order-independent), that existing summary
+    is returned immediately without calling the AI again.
+    Otherwise a new summary is generated and saved.
     """
     transcripts = get_transcripts_by_ids(db, user_id, transcript_ids)
     if not transcripts:
         return None
+
+    # --- Idempotency check ---
+    # Normalise the requested IDs to a frozenset for order-independent comparison
+    requested_set = frozenset(transcript_ids)
+
+    existing_custom_summaries = (
+        db.query(Summary)
+        .filter(
+            Summary.user_id == user_id,
+            Summary.transcript_ids.isnot(None),
+        )
+        .all()
+    )
+
+    for existing in existing_custom_summaries:
+        if existing.transcript_ids and frozenset(existing.transcript_ids) == requested_set:
+            logger.info(
+                "Returning cached custom summary %s for user %s (exact transcript_ids match)",
+                existing.id,
+                user_id,
+            )
+            return existing
+    # --- End idempotency check ---
 
     result = generate_preview_summary(transcripts)
 
