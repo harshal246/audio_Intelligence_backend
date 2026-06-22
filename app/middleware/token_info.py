@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 _AUTH_PREFIXES = ("/auth",)
 
 # Only these prefixes get the token_info annotation
-_SERVICE_PREFIXES = ("/transcribe", "/summary")
+_SERVICE_PREFIXES = ("/transcribe", "/summary", "/chat")
 
 
 def _inspect_token(authorization: str | None) -> dict:
