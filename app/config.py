@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str  # Google Gemini API key
     GEMINI_MODEL: str = "gemini-2.5-flash"  # Model: gemini-2.5-flash (fast) or gemini-2.5-pro (quality)
 
+    # Cloudinary settings
+    CLOUDINARY_CLOUD_NAME: str
+    CLOUDINARY_API_KEY: str
+    CLOUDINARY_API_SECRET: str
+
     # Tell pydantic to read values from the .env file at project root
     model_config = {"env_file": ".env"}
 

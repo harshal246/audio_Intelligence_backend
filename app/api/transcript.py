@@ -90,7 +90,10 @@ async def transcribe_simple(
     - **generate_summary** (bool): If true, generates a summary and saves it to the database.
     """
 
-    # ── PATH A: audio file ────────────────────────────────────────────────────
+    audio_url = None
+    final_path = None
+
+    # ── Upload Audio to Cloudinary if provided ─────────────────────────────────
     if audio is not None:
         SUPPORTED_FORMATS = ('.wav', '.mp3', '.m4a', '.flac', '.ogg', '.aac', '.wma', '.webm', '.mp4')
         file_ext = Path(audio.filename).suffix.lower()
@@ -130,8 +133,56 @@ async def transcribe_simple(
         else:
             final_path = str(original_path)
 
+        # Upload to Cloudinary
+        try:
+            from app.services.cloudinary_service import upload_audio_to_cloudinary
+            custom_id = f"user_{current_user.id}_{Path(final_path).stem}"
+            
+            upload_result = await run_in_threadpool(
+                upload_audio_to_cloudinary,
+                final_path,
+                custom_id
+            )
+            audio_url = upload_result["url"]
+        except Exception as e:
+            # Clean up local file on failure
+            try:
+                os.remove(final_path)
+            except Exception:
+                pass
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to upload audio to cloud storage: {str(e)}"
+            )
+
+    # ── Process Transcript Segments ───────────────────────────────────────────
+    if transcript_text is not None:
+        label = (audio.filename if audio else None) or audio_filename or "manual_entry.txt"
+        segments = [
+            {
+                "speaker": "SPEAKER",
+                "start_time": 0.0,
+                "end_time": 0.0,
+                "text": transcript_text.strip(),
+            }
+        ]
         result_data = await run_in_threadpool(
-            transcribe_simple_audio, final_path, audio.filename, current_user.id, db, transcript_id, title or "Untitled Transcript"
+            save_simple_transcript, db, current_user.id, label, segments, transcript_id, title or "Untitled Transcript", audio_url
+        )
+        saved_segments = result_data["segments"]
+        saved_transcript_id = result_data["transcript_id"]
+
+        response = {
+            "status": "success",
+            "message": "Transcript text saved to database." if audio is None else "Audio uploaded and transcript text saved (transcription skipped).",
+            "audio_filename": label,
+            "transcript_id": saved_transcript_id,
+            "segment_count": len(saved_segments),
+            "segments": saved_segments,
+        }
+    elif audio is not None:
+        result_data = await run_in_threadpool(
+            transcribe_simple_audio, final_path, audio.filename, current_user.id, db, transcript_id, title or "Untitled Transcript", audio_url
         )
         segments = result_data["segments"]
         saved_transcript_id = result_data["transcript_id"]
@@ -144,35 +195,18 @@ async def transcribe_simple(
             "segment_count": len(segments),
             "segments": segments,
         }
-
-    # ── PATH B: raw text from frontend ───────────────────────────────────────
-    elif transcript_text is not None:
-        label = audio_filename or "manual_entry.txt"
-        segments = [
-            {
-                "speaker": "SPEAKER",
-                "start_time": 0.0,
-                "end_time": 0.0,
-                "text": transcript_text.strip(),
-            }
-        ]
-        result_data = await run_in_threadpool(save_simple_transcript, db, current_user.id, label, segments, transcript_id, title or "Untitled Transcript")
-        saved_segments = result_data["segments"]
-        saved_transcript_id = result_data["transcript_id"]
-
-        response = {
-            "status": "success",
-            "message": "Transcript text saved to database.",
-            "audio_filename": label,
-            "transcript_id": saved_transcript_id,
-            "segment_count": len(saved_segments),
-            "segments": saved_segments,
-        }
     else:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Must provide either audio file or transcript_text",
         )
+
+    # Clean up local file after successful processing
+    if final_path:
+        try:
+            os.remove(final_path)
+        except Exception:
+            pass
 
     # ── Summary & Title Extraction ───────────────────────────────────────────
     if generate_summary or title is None:
