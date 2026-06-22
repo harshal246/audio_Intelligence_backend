@@ -23,7 +23,7 @@ class Settings(BaseSettings):
 
     # Google Gemini API for AI-powered summaries
     GEMINI_API_KEY: str  # Google Gemini API key
-    GEMINI_MODEL: str = "gemini-2.5-flash"  # Model: gemini-2.5-flash (fast) or gemini-2.5-pro (quality)
+    GEMINI_MODEL: str = "gemini-3.1-flash-lite"  # Model: gemini-2.5-flash (fast) or gemini-2.5-pro (quality)
 
     # Tell pydantic to read values from the .env file at project root
     model_config = {"env_file": ".env"}
