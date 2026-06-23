@@ -26,9 +26,11 @@ class Settings(BaseSettings):
     GEMINI_MODEL: str = "gemini-2.5-flash"  # Model: gemini-2.5-flash (fast) or gemini-2.5-pro (quality)
 
     # Cloudinary settings
-    CLOUDINARY_CLOUD_NAME: str
-    CLOUDINARY_API_KEY: str
-    CLOUDINARY_API_SECRET: str
+    # Set USE_CLOUDINARY=false in .env to skip cloud upload and keep files local
+    USE_CLOUDINARY: bool = False
+    CLOUDINARY_CLOUD_NAME: str = ""
+    CLOUDINARY_API_KEY: str = ""
+    CLOUDINARY_API_SECRET: str = ""
 
     # Tell pydantic to read values from the .env file at project root
     model_config = {"env_file": ".env"}

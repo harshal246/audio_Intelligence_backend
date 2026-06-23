@@ -1,7 +1,5 @@
 # Gemini transcription service - handles speech-to-text transcription using Google Gemini
-import time
 import logging
-import io
 from typing import Dict, List, Optional
 
 from app.config import settings
@@ -22,21 +20,37 @@ def transcribe_audio_gemini(audio_path: str) -> Dict:
     try:
         import json
         import re
-        import google.generativeai as genai
+        from google import genai
+        from google.genai import types
 
         # Configure Gemini client
-        genai.configure(api_key=settings.GEMINI_API_KEY)
+        client = genai.Client(api_key=settings.GEMINI_API_KEY)
 
-        # Create a Gemini model for transcription
-        model = genai.GenerativeModel(
-            model_name=settings.GEMINI_MODEL,
-            generation_config={
-                "temperature": 0.1,
+        # Create prompt for transcription
+        prompt = """
+        You are an audio transcription assistant. Transcribe the following audio file.
+        Return the transcription as a JSON object matching the required schema.
+
+        Note: Since this is a transcription task, please provide the actual transcribed text
+        and reasonable timestamps for each segment in total seconds. Do NOT include speaker information.
+        CRITICAL: The "start" and "end" timestamps MUST be valid floating point values in total seconds
+        (e.g., 60.5 for 1 minute and 0.5 seconds). DO NOT use formatted strings or multiple decimals like 1.0.66.
+        """
+
+        logger.info("Uploading audio file to Gemini: %s", audio_path)
+        audio_file_obj = client.files.upload(file=audio_path)
+
+        logger.info("Generating transcription with Gemini for audio: %s", audio_path)
+        response = client.models.generate_content(
+            model=settings.GEMINI_MODEL,
+            contents=[prompt, audio_file_obj],
+            config=types.GenerateContentConfig(
+                temperature=0.1,
                 # Raised to model maximum — long audio can produce thousands of tokens.
                 # Gemini 2.5 Flash supports up to 65 536 output tokens.
-                "max_output_tokens": 65536,
-                "response_mime_type": "application/json",
-                "response_schema": {
+                max_output_tokens=65536,
+                response_mime_type="application/json",
+                response_schema={
                     "type": "object",
                     "properties": {
                         "language": {"type": "string"},
@@ -61,25 +75,8 @@ def transcribe_audio_gemini(audio_path: str) -> Dict:
                     },
                     "required": ["language", "segments"],
                 },
-            },
+            )
         )
-
-        # Create prompt for transcription
-        prompt = """
-        You are an audio transcription assistant. Transcribe the following audio file.
-        Return the transcription as a JSON object matching the required schema.
-
-        Note: Since this is a transcription task, please provide the actual transcribed text
-        and reasonable timestamps for each segment in total seconds. Do NOT include speaker information.
-        CRITICAL: The "start" and "end" timestamps MUST be valid floating point values in total seconds
-        (e.g., 60.5 for 1 minute and 0.5 seconds). DO NOT use formatted strings or multiple decimals like 1.0.66.
-        """
-
-        logger.info("Uploading audio file to Gemini: %s", audio_path)
-        audio_file_obj = genai.upload_file(path=audio_path)
-
-        logger.info("Generating transcription with Gemini for audio: %s", audio_path)
-        response = model.generate_content([prompt, audio_file_obj])
 
         raw_text = response.text
 
@@ -117,7 +114,7 @@ def transcribe_audio_gemini(audio_path: str) -> Dict:
                     "Failed to parse Gemini response and recovery found 0 segments.\n"
                     "Response tail: %s", raw_text[-300:]
                 )
-                genai.delete_file(audio_file_obj.name)
+                client.files.delete(name=audio_file_obj.name)
                 raise primary_err
 
         # Strip any speaker fields Gemini may have hallucinated
@@ -130,13 +127,12 @@ def transcribe_audio_gemini(audio_path: str) -> Dict:
             result.get("language", "unknown"),
         )
 
-        genai.delete_file(audio_file_obj.name)
+        client.files.delete(name=audio_file_obj.name)
         return result
 
     except Exception as e:
         logger.error("Gemini transcription failed: %s", str(e))
         raise
-
 
 
 def get_gemini_device_config():

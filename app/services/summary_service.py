@@ -7,7 +7,8 @@ from datetime import datetime, date
 from typing import List, Optional
 from uuid import UUID
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -15,9 +16,6 @@ from app.models.transcript import Transcript
 from app.models.summary import Summary
 
 logger = logging.getLogger(__name__)
-
-# Configure Gemini client once at module load
-genai.configure(api_key=settings.GEMINI_API_KEY)
 
 
 def get_daily_transcripts(db: Session, user_id: UUID, target_date: date) -> List[Transcript]:
@@ -228,14 +226,16 @@ Transcript:
 {combined_text}'''
 
     try:
-        model = genai.GenerativeModel(
-            model_name=settings.GEMINI_MODEL,
-            generation_config=genai.GenerationConfig(
+        client = genai.Client(api_key=settings.GEMINI_API_KEY)
+        
+        response = client.models.generate_content(
+            model=settings.GEMINI_MODEL,
+            contents=prompt,
+            config=types.GenerateContentConfig(
                 temperature=0.2,
                 max_output_tokens=8192,
-            ),
+            )
         )
-        response = model.generate_content(prompt)
         raw_text = response.text.strip()
 
         # Extract TITLE robustly using regex

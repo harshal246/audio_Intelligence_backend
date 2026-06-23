@@ -74,6 +74,7 @@ async def transcribe_simple(
     audio_filename: Optional[str] = Form(default=None),
     transcript_id: Optional[str] = Query(default=None, description="Optional ID of an existing transcript to append to"),
     generate_summary: bool = Query(default=False, description="If true, generate a preview summary after saving and return it in the same response."),
+    is_last_chunk: bool = Query(default=True, description="Set to false for intermediate chunks — skips Cloudinary upload. Set to true (default) on the final chunk to upload the audio to cloud storage."),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -85,9 +86,13 @@ async def transcribe_simple(
     - **transcript_text** (str): Saves the provided plain text directly to DB.
 
     Optional fields:
-    - **title** (str):            Optional title. If missing, one is extracted automatically.
-    - **audio_filename** (str):   Display name for text-only transcripts. Defaults to 'manual_entry.txt'.
-    - **generate_summary** (bool): If true, generates a summary and saves it to the database.
+    - **title** (str):              Optional title. If missing, one is extracted automatically.
+    - **audio_filename** (str):     Display name for text-only transcripts. Defaults to 'manual_entry.txt'.
+    - **generate_summary** (bool):  If true, generates a summary and saves it to the database.
+    - **is_last_chunk** (bool):     Set to false for all intermediate audio chunks — skips
+                                    Cloudinary upload (transcription still happens and is appended).
+                                    Set to true (or omit) on the final chunk to upload the audio
+                                    to cloud storage and save the URL to the transcript record.
     """
 
     audio_url = None
@@ -133,27 +138,31 @@ async def transcribe_simple(
         else:
             final_path = str(original_path)
 
-        # Upload to Cloudinary
-        try:
-            from app.services.cloudinary_service import upload_audio_to_cloudinary
-            custom_id = f"user_{current_user.id}_{Path(final_path).stem}"
-            
-            upload_result = await run_in_threadpool(
-                upload_audio_to_cloudinary,
-                final_path,
-                custom_id
-            )
-            audio_url = upload_result["url"]
-        except Exception as e:
-            # Clean up local file on failure
+        # Upload to Cloudinary ONLY on the last chunk AND if USE_CLOUDINARY is enabled
+        if is_last_chunk and settings.USE_CLOUDINARY:
             try:
-                os.remove(final_path)
-            except Exception:
-                pass
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to upload audio to cloud storage: {str(e)}"
-            )
+                from app.services.cloudinary_service import upload_audio_to_cloudinary
+                custom_id = f"user_{current_user.id}_{Path(final_path).stem}"
+
+                upload_result = await run_in_threadpool(
+                    upload_audio_to_cloudinary,
+                    final_path,
+                    custom_id
+                )
+                audio_url = upload_result["url"]
+            except Exception as e:
+                # Clean up local file on failure
+                try:
+                    os.remove(final_path)
+                except Exception:
+                    pass
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to upload audio to cloud storage: {str(e)}"
+                )
+        elif is_last_chunk and not settings.USE_CLOUDINARY:
+            # Local storage mode — keep the file on disk; store relative path as the URL
+            audio_url = str(final_path)
 
     # ── Process Transcript Segments ───────────────────────────────────────────
     if transcript_text is not None:
@@ -201,8 +210,8 @@ async def transcribe_simple(
             detail="Must provide either audio file or transcript_text",
         )
 
-    # Clean up local file after successful processing
-    if final_path:
+    # Clean up local file after successful processing (only when Cloudinary handled storage)
+    if final_path and settings.USE_CLOUDINARY:
         try:
             os.remove(final_path)
         except Exception:
@@ -246,3 +255,43 @@ async def transcribe_simple(
             }
 
     return response
+
+
+@router.delete("/{transcript_id}", status_code=status.HTTP_200_OK)
+async def delete_transcript(
+    transcript_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Delete a transcript, its embeddings, and its related summaries.
+    """
+    import uuid
+    try:
+        t_uuid = uuid.UUID(transcript_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid transcript ID")
+        
+    transcript = db.query(Transcript).filter(
+        Transcript.id == t_uuid,
+        Transcript.user_id == current_user.id
+    ).first()
+    
+    if not transcript:
+        raise HTTPException(status_code=404, detail="Transcript not found")
+        
+    # Delete related embeddings explicitly
+    from app.models.transcript_embedding import TranscriptEmbedding
+    db.query(TranscriptEmbedding).filter(TranscriptEmbedding.transcript_id == t_uuid).delete()
+    
+    # Delete related summaries
+    summaries = db.query(Summary).filter(Summary.user_id == current_user.id).all()
+    for s in summaries:
+        if s.transcript_ids and t_uuid in s.transcript_ids:
+            db.delete(s)
+            
+    # Delete the transcript itself
+    db.delete(transcript)
+    db.commit()
+    
+    return {"status": "success", "message": "Transcript and related data deleted successfully"}
