@@ -55,6 +55,8 @@ async def get_transcripts(
         result.append({
             "transcript_id": t_id,
             "title": t.title,
+            "audio_filename": t.audio_filename,
+            "audio_url": t.audio_url,
             "processing_timestamp": t.processing_timestamp.isoformat() if t.processing_timestamp else None,
             "summary": summary_map.get(t_id)
         })
