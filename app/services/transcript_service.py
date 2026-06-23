@@ -133,6 +133,7 @@ def save_simple_transcript(
     segments: List[Dict],
     transcript_id: str = None,
     title: str = "Untitled Transcript",
+    audio_url: str = None,
 ) -> Dict:
     """
     Save a transcript (already built externally) to the database without
@@ -162,21 +163,79 @@ def save_simple_transcript(
         flag_modified(transcript, "full_transcript_data")
         db.commit()
         logger.info("Appended %d segment(s) to transcript %s", len(segments), transcript_id)
+
+        # Re-generate embeddings for the full updated transcript
+        _trigger_embeddings(db, transcript)
+
         return {"transcript_id": str(transcript.id), "segments": transcript.full_transcript_data}
     else:
         transcript = Transcript(
             user_id=user_id,
             title=title,
             audio_filename=audio_filename,
+            audio_url=audio_url,
             full_transcript_data=segments,
         )
         db.add(transcript)
         db.commit()
         logger.info("Simple transcript saved for user %s — %d segment(s)", user_id, len(segments))
+
+        # Generate embeddings for the new transcript
+        _trigger_embeddings(db, transcript)
+
         return {"transcript_id": str(transcript.id), "segments": segments}
 
 
-def transcribe_simple_audio(audio_path: str, audio_filename: str, user_id: UUID, db: Session, transcript_id: str = None, title: str = "Untitled Transcript") -> Dict:
+def _seconds_to_timestamp(sec: float) -> str:
+    h = int(sec // 3600)
+    m = int((sec % 3600) // 60)
+    s = int(sec % 60)
+    if h > 0:
+        return f"{h}h {m:02d}m {s:02d}s"
+    elif m > 0:
+        return f"{m}m {s:02d}s"
+    else:
+        return f"{s}s"
+
+
+def _trigger_embeddings(db: Session, transcript: Transcript) -> None:
+    """
+    Fire-and-forget helper: build the plain text from a transcript's segments
+    and call the embedding service to chunk + vectorise it.
+    Failures are logged but never propagate — embeddings are best-effort.
+    """
+    try:
+        from app.services.embedding_service import save_embeddings
+        import datetime
+        segments = transcript.full_transcript_data or []
+        
+        text_parts = []
+        for seg in segments:
+            if not isinstance(seg, dict):
+                continue
+            text = seg.get("text", "").strip()
+            if not text:
+                continue
+            ts = seg.get("start_time")
+            if ts is not None:
+                text_parts.append(f"[{_seconds_to_timestamp(float(ts))}] {text}")
+            else:
+                text_parts.append(text)
+        
+        full_text = " ".join(text_parts)
+        
+        if full_text:
+            dt = transcript.processing_timestamp or datetime.datetime.now(datetime.timezone.utc)
+            date_str = dt.strftime("%Y-%m-%d")
+            title_str = transcript.title or transcript.audio_filename or "Untitled"
+            metadata_prefix = f"[Transcript Date: {date_str}, Title: {title_str}]"
+            
+            save_embeddings(db, transcript.id, transcript.user_id, full_text, metadata_prefix=metadata_prefix)
+    except Exception as e:
+        logger.warning("Embedding generation skipped for transcript %s: %s", transcript.id, e)
+
+
+def transcribe_simple_audio(audio_path: str, audio_filename: str, user_id: UUID, db: Session, transcript_id: str = None, title: str = "Untitled Transcript", audio_url: str = None) -> Dict:
     """
     Transcribe audio with Gemini only — no diarization, no speaker labels.
     Saves the result to the database immediately.
@@ -206,4 +265,4 @@ def transcribe_simple_audio(audio_path: str, audio_filename: str, user_id: UUID,
             "text": text,
         })
 
-    return save_simple_transcript(db, user_id, audio_filename, segments, transcript_id, title)
+    return save_simple_transcript(db, user_id, audio_filename, segments, transcript_id, title, audio_url)
