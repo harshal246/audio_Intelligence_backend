@@ -35,7 +35,7 @@ async def ask(
             detail="Question cannot be empty",
         )
 
-    result = ask_question(db, current_user.id, body.question.strip(), body.session_id)
+    result = ask_question(db, current_user.id, body.question.strip(), body.session_id, body.target_date)
 
     return AskResponse(
         session_id=result["session_id"],
