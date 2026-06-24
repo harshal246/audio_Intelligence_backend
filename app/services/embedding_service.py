@@ -8,6 +8,7 @@ Responsibilities:
   4. vector_search(question, user_id)  — find the top-N most relevant chunks for a question
 """
 import logging
+from datetime import date, datetime
 from typing import List, Optional
 from uuid import UUID
 import numpy as np
@@ -147,6 +148,7 @@ def vector_search(
     user_id: UUID,
     question: str,
     top_k: int = TOP_K_RESULTS,
+    target_date: Optional[date] = None,
 ) -> List[str]:
     """
     Convert the user's question into a vector, then find the most semantically
@@ -162,11 +164,22 @@ def vector_search(
         logger.warning("Vector search skipped — question embedding failed")
         return []
 
-    # Fetch all embedding rows for this user
-    rows = db.query(TranscriptEmbedding).filter(
+    # Fetch embedding rows for this user (optionally filtered by target_date)
+    q = db.query(TranscriptEmbedding).filter(
         TranscriptEmbedding.user_id == user_id,
         TranscriptEmbedding.embedding.isnot(None),
-    ).all()
+    )
+
+    if target_date:
+        from app.models.transcript import Transcript
+        start = datetime.combine(target_date, datetime.min.time())
+        end = datetime.combine(target_date, datetime.max.time())
+        q = q.join(Transcript).filter(
+            Transcript.processing_timestamp >= start,
+            Transcript.processing_timestamp <= end
+        )
+
+    rows = q.all()
 
     if not rows:
         logger.info("No embeddings found for user %s", user_id)

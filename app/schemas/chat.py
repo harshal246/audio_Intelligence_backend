@@ -8,6 +8,7 @@ from pydantic import BaseModel
 class AskRequest(BaseModel):
     question: str
     session_id: Optional[UUID] = None
+    target_date: Optional[date] = None
 
 
 class MessageOut(BaseModel):

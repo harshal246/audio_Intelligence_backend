@@ -102,6 +102,7 @@ def ask_question(
     user_id: UUID,
     question: str,
     session_id: Optional[UUID] = None,
+    target_date: Optional[date] = None,
 ) -> dict:
     # ── Resolve / create session ──────────────────────────────────────────────
     if session_id:
@@ -138,7 +139,7 @@ def ask_question(
     # ── RAG: semantic vector search ───────────────────────────────────────────
     try:
         from app.services.embedding_service import vector_search
-        context_chunks = vector_search(db, user_id, question)
+        context_chunks = vector_search(db, user_id, question, target_date=target_date)
         logger.info(
             "Vector search for session %s returned %d chunks",
             session.id, len(context_chunks),
