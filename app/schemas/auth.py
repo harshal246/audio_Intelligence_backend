@@ -44,3 +44,28 @@ class AuthResponse(BaseModel):
 class RefreshRequest(BaseModel):
     # The refresh token the frontend wants to exchange for a new pair
     refresh_token: str
+
+
+class ForgotPasswordRequest(BaseModel):
+    # Only the email is needed — we look up the user and send a link to this address
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    # One-time token from the URL param in the reset email
+    token: str
+    # New password — same strength rules as registration for consistency
+    new_password: str
+
+    @field_validator("new_password")
+    @classmethod
+    def validate_new_password(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("Password must be at least 8 characters")
+        if not any(c.isupper() for c in v):
+            raise ValueError("Password must contain an uppercase letter")
+        if not any(c.islower() for c in v):
+            raise ValueError("Password must contain a lowercase letter")
+        if not any(c.isdigit() for c in v):
+            raise ValueError("Password must contain a digit")
+        return v

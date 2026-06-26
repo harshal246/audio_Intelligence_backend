@@ -75,6 +75,29 @@ def generate_embedding(text: str) -> Optional[List[float]]:
         logger.error("Embedding generation failed: %s", e)
         return None
 
+def generate_embeddings_batch(texts: List[str]) -> Optional[List[List[float]]]:
+    """
+    Convert a list of strings into a list of 768-dimensional vectors using Google's
+    text-embedding-004 model.
+
+    Returns:
+        List of 768-dimensional vectors, or None if the call fails.
+    """
+    if not texts:
+        return []
+    try:
+        from google.genai import types
+        client = genai.Client(api_key=settings.GEMINI_API_KEY)
+        result = client.models.embed_content(
+            model=EMBEDDING_MODEL,
+            contents=texts,
+            config=types.EmbedContentConfig(output_dimensionality=768)
+        )
+        return [emb.values for emb in result.embeddings]
+    except Exception as e:
+        logger.error("Batch embedding generation failed: %s", e)
+        return None
+
 
 # ── 3. Save embeddings for a transcript ─────────────────────────────────────
 
@@ -103,14 +126,23 @@ def save_embeddings(
 
     chunks = chunk_transcript_text(full_text)
     saved  = 0
+    
+    import time
 
     for idx, chunk in enumerate(chunks):
         if metadata_prefix:
             chunk = f"{metadata_prefix}\n{chunk}"
             
         vector = generate_embedding(chunk)
+        
+        # If rate limited, back off and retry once
         if vector is None:
-            logger.warning("Skipping chunk %d for transcript %s — embedding failed", idx, transcript_id)
+            logger.warning("Embedding failed for chunk %d, retrying in 5s...", idx)
+            time.sleep(5)
+            vector = generate_embedding(chunk)
+            
+        if vector is None:
+            logger.error("Skipping chunk %d for transcript %s — embedding failed after retry", idx, transcript_id)
             continue
 
         row = TranscriptEmbedding(
@@ -122,6 +154,11 @@ def save_embeddings(
         )
         db.add(row)
         saved += 1
+        
+        # Sleep to respect rate limits (e.g., free tier allows ~15 requests/minute)
+        # We sleep 4 seconds between chunks to stay under the limit.
+        # Since this runs in a background thread, it won't block the user.
+        time.sleep(4)
 
     db.commit()
     logger.info("Saved %d embedding chunks for transcript %s", saved, transcript_id)
