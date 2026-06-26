@@ -134,6 +134,7 @@ def save_simple_transcript(
     transcript_id: str = None,
     title: str = "Untitled Transcript",
     audio_url: str = None,
+    trigger_embeddings: bool = True,
 ) -> Dict:
     """
     Save a transcript (already built externally) to the database without
@@ -145,6 +146,7 @@ def save_simple_transcript(
         audio_filename: Label to store (original filename or a display name)
         segments:       List of {speaker, start_time, end_time, text} dicts
         transcript_id:  Optional ID of an existing transcript to append to
+        trigger_embeddings: If true, triggers embedding generation synchronously.
 
     Returns:
         Dict containing transcript_id and the full segments list
@@ -165,7 +167,8 @@ def save_simple_transcript(
         logger.info("Appended %d segment(s) to transcript %s", len(segments), transcript_id)
 
         # Re-generate embeddings for the full updated transcript
-        _trigger_embeddings(db, transcript)
+        if trigger_embeddings:
+            _trigger_embeddings(db, transcript)
 
         return {"transcript_id": str(transcript.id), "segments": transcript.full_transcript_data}
     else:
@@ -181,7 +184,8 @@ def save_simple_transcript(
         logger.info("Simple transcript saved for user %s — %d segment(s)", user_id, len(segments))
 
         # Generate embeddings for the new transcript
-        _trigger_embeddings(db, transcript)
+        if trigger_embeddings:
+            _trigger_embeddings(db, transcript)
 
         return {"transcript_id": str(transcript.id), "segments": segments}
 
@@ -235,7 +239,16 @@ def _trigger_embeddings(db: Session, transcript: Transcript) -> None:
         logger.warning("Embedding generation skipped for transcript %s: %s", transcript.id, e)
 
 
-def transcribe_simple_audio(audio_path: str, audio_filename: str, user_id: UUID, db: Session, transcript_id: str = None, title: str = "Untitled Transcript", audio_url: str = None) -> Dict:
+def transcribe_simple_audio(
+    audio_path: str,
+    audio_filename: str,
+    user_id: UUID,
+    db: Session,
+    transcript_id: str = None,
+    title: str = "Untitled Transcript",
+    audio_url: str = None,
+    trigger_embeddings: bool = True,
+) -> Dict:
     """
     Transcribe audio with Gemini only — no diarization, no speaker labels.
     Saves the result to the database immediately.
@@ -246,6 +259,7 @@ def transcribe_simple_audio(audio_path: str, audio_filename: str, user_id: UUID,
         user_id:        Authenticated user's UUID
         db:             Active SQLAlchemy session
         transcript_id:  Optional ID of an existing transcript to append to
+        trigger_embeddings: If true, triggers embedding generation synchronously.
 
     Returns:
         Dict containing transcript_id and the full segments list
@@ -265,4 +279,29 @@ def transcribe_simple_audio(audio_path: str, audio_filename: str, user_id: UUID,
             "text": text,
         })
 
-    return save_simple_transcript(db, user_id, audio_filename, segments, transcript_id, title, audio_url)
+    return save_simple_transcript(db, user_id, audio_filename, segments, transcript_id, title, audio_url, trigger_embeddings=trigger_embeddings)
+
+
+def trigger_embeddings_background(transcript_id: str) -> None:
+    """
+    Background task to fetch the transcript and trigger its embeddings
+    using a new DB session to prevent cross-thread session issues.
+    """
+    logger.info("Starting background embedding generation for transcript %s", transcript_id)
+    from app.database.db import SessionLocal
+    from app.models.transcript import Transcript
+    import uuid
+
+    db = SessionLocal()
+    try:
+        t_uuid = uuid.UUID(transcript_id) if isinstance(transcript_id, str) else transcript_id
+        transcript = db.query(Transcript).filter(Transcript.id == t_uuid).first()
+        if transcript:
+            _trigger_embeddings(db, transcript)
+            logger.info("Successfully completed background embedding generation for transcript %s", transcript_id)
+        else:
+            logger.error("Transcript %s not found in background task", transcript_id)
+    except Exception as e:
+        logger.exception("Failed generating embeddings in background for transcript %s", transcript_id)
+    finally:
+        db.close()

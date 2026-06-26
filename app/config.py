@@ -14,6 +14,18 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     # Longer-lived refresh token (7 days) — avoids forcing frequent re-login
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    # Password reset token expiry — short window reduces exposure if email is intercepted
+    RESET_TOKEN_EXPIRE_MINUTES: int = 15
+
+    # SMTP email settings for sending password-reset emails
+    SMTP_HOST: str = "smtp.gmail.com"
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""              # Sender email address (e.g. you@gmail.com)
+    SMTP_PASSWORD: str = ""          # Gmail App Password (not your real Google password)
+    SMTP_FROM: str = ""              # "From" display name/email in reset emails
+
+    # Base URL of your frontend — used to build the reset link inside the email
+    FRONTEND_URL: str = "http://localhost:3000"
 
     # Audio processing settings
     HF_TOKEN: str  # Hugging Face token for PyAnnote

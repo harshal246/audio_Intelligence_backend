@@ -10,7 +10,13 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.database.db import get_db, SessionLocal
 from app.models.user import User
-from app.services.transcript_service import process_audio_pipeline, format_transcript_output, save_simple_transcript, transcribe_simple_audio
+from app.services.transcript_service import (
+    process_audio_pipeline,
+    format_transcript_output,
+    save_simple_transcript,
+    transcribe_simple_audio,
+    trigger_embeddings_background
+)
 from app.services.summary_service import generate_preview_summary
 from app.utils.auth import get_current_user
 
@@ -70,6 +76,7 @@ async def get_transcripts(
 
 @router.post("/simple", status_code=status.HTTP_201_CREATED)
 async def transcribe_simple(
+    background_tasks: BackgroundTasks,
     title: Optional[str] = Form(default=None),
     transcript_text: Optional[str] = Form(default=None),
     audio: Optional[UploadFile] = File(default=None),
@@ -178,7 +185,15 @@ async def transcribe_simple(
             }
         ]
         result_data = await run_in_threadpool(
-            save_simple_transcript, db, current_user.id, label, segments, transcript_id, title or "Untitled Transcript", audio_url
+            save_simple_transcript,
+            db,
+            current_user.id,
+            label,
+            segments,
+            transcript_id,
+            title or "Untitled Transcript",
+            audio_url,
+            trigger_embeddings=False
         )
         saved_segments = result_data["segments"]
         saved_transcript_id = result_data["transcript_id"]
@@ -193,7 +208,15 @@ async def transcribe_simple(
         }
     elif audio is not None:
         result_data = await run_in_threadpool(
-            transcribe_simple_audio, final_path, audio.filename, current_user.id, db, transcript_id, title or "Untitled Transcript", audio_url
+            transcribe_simple_audio,
+            final_path,
+            audio.filename,
+            current_user.id,
+            db,
+            transcript_id,
+            title or "Untitled Transcript",
+            audio_url,
+            trigger_embeddings=False
         )
         segments = result_data["segments"]
         saved_transcript_id = result_data["transcript_id"]
@@ -255,6 +278,9 @@ async def transcribe_simple(
                 "title": new_summary.title,
                 "summary_text": new_summary.summary_text
             }
+
+    # Trigger embedding generation in a background task to prevent blocking the HTTP response
+    background_tasks.add_task(trigger_embeddings_background, saved_transcript_id)
 
     return response
 
