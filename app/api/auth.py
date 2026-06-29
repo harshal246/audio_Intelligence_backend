@@ -15,10 +15,10 @@ from app.models.refresh_token import RefreshToken
 from app.models.user import User
 from app.schemas.auth import (
     RegisterRequest, LoginRequest, AuthResponse,
-    RefreshRequest, ForgotPasswordRequest, ResetPasswordRequest,
+    RefreshRequest, ForgotPasswordRequest, VerifyOtpRequest, ResetPasswordRequest,
 )
 from app.utils.auth import hash_password, verify_password, create_access_token, create_refresh_token
-from app.utils.email import send_reset_email
+from app.utils.email import send_otp_email
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -145,17 +145,15 @@ def logout(body: RefreshRequest, db: Session = Depends(get_db)):
 @router.post("/forgot-password", status_code=status.HTTP_200_OK)
 def forgot_password(body: ForgotPasswordRequest, db: Session = Depends(get_db)):
     """
-    Request a password-reset email.
+    Send a 6-digit OTP to the user's email for password reset.
 
     Security note: we always return 200 regardless of whether the email
-    exists in our DB — this prevents email enumeration attacks where an
-    attacker probes which addresses are registered.
+    exists in our DB — this prevents email enumeration attacks.
     """
     user = db.execute(select(User).where(User.email == body.email)).scalar_one_or_none()
 
     if user:
-        # Invalidate any outstanding unused reset tokens for this user
-        # so only the most recent link is valid (prevents token accumulation).
+        # Invalidate any outstanding unused OTPs for this user
         db.execute(
             update(PasswordResetToken)
             .where(
@@ -165,60 +163,87 @@ def forgot_password(body: ForgotPasswordRequest, db: Session = Depends(get_db)):
             .values(used=True)
         )
 
-        # Generate a cryptographically secure random token
-        raw_token = secrets.token_urlsafe(32)
-        token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+        # Generate a 6-digit OTP
+        otp = f"{secrets.randbelow(1000000):06d}"
+        otp_hash = hashlib.sha256(otp.encode()).hexdigest()
         expires_at = datetime.now(timezone.utc) + timedelta(minutes=settings.RESET_TOKEN_EXPIRE_MINUTES)
 
         reset_record = PasswordResetToken(
             user_id=user.id,
-            token_hash=token_hash,
+            otp_hash=otp_hash,
             expires_at=expires_at,
         )
         db.add(reset_record)
         db.commit()
 
-        # Send email — if SMTP is misconfigured we log but don't expose the
-        # error to the caller (the user sees a generic success message).
         try:
-            send_reset_email(to_email=user.email, raw_token=raw_token)
-        except Exception as exc:
+            send_otp_email(to_email=user.email, otp=otp)
+        except Exception:
             import traceback
             traceback.print_exc()
-            # Don't re-raise — returning 500 here would reveal that the email exists.
+            # Don't re-raise — returning 500 would reveal that the email exists.
 
-    # Always return the same response to prevent email-enumeration
-    return {"detail": "If that email is registered, a reset link has been sent."}
+    return {"detail": "If that email is registered, a reset code has been sent."}
 
 
-@router.post("/reset-password", status_code=status.HTTP_200_OK)
-def reset_password(body: ResetPasswordRequest, db: Session = Depends(get_db)):
+@router.post("/verify-otp", status_code=status.HTTP_200_OK)
+def verify_otp(body: VerifyOtpRequest, db: Session = Depends(get_db)):
     """
-    Consume a password-reset token and update the user's password.
-
-    The token is:
-      - Looked up by its SHA-256 hash (raw token is never stored)
-      - Checked for expiry
-      - Checked it hasn't been used already
-    After a successful reset the token is marked used and ALL active
-    refresh tokens for that user are revoked so any stolen sessions are
-    immediately invalidated.
+    Verify the 6-digit OTP and return a short-lived reset_session_token.
+    The reset_session_token is used in the next step to actually reset the password.
     """
-    token_hash = hashlib.sha256(body.token.encode()).hexdigest()
+    user = db.execute(select(User).where(User.email == body.email)).scalar_one_or_none()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid code. Please request a new one.",
+        )
 
+    otp_hash = hashlib.sha256(body.otp.encode()).hexdigest()
     record = db.execute(
         select(PasswordResetToken).where(
-            PasswordResetToken.token_hash == token_hash,
+            PasswordResetToken.user_id == user.id,
+            PasswordResetToken.otp_hash == otp_hash,
             PasswordResetToken.used == False,
             PasswordResetToken.expires_at > datetime.now(timezone.utc),
         )
     ).scalar_one_or_none()
 
     if not record:
-        # Generic message — don't reveal whether token was valid but expired
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Reset link is invalid or has expired. Please request a new one.",
+            detail="Invalid or expired code. Please request a new one.",
+        )
+
+    # OTP is valid — generate a short-lived reset session token
+    raw_session_token = secrets.token_urlsafe(32)
+    record.reset_session_hash = hashlib.sha256(raw_session_token.encode()).hexdigest()
+    record.otp_verified = True
+    db.commit()
+
+    return {"reset_session_token": raw_session_token}
+
+
+@router.post("/reset-password", status_code=status.HTTP_200_OK)
+def reset_password(body: ResetPasswordRequest, db: Session = Depends(get_db)):
+    """
+    Consume the reset_session_token (issued after OTP verification) and update the password.
+    """
+    session_hash = hashlib.sha256(body.reset_session_token.encode()).hexdigest()
+
+    record = db.execute(
+        select(PasswordResetToken).where(
+            PasswordResetToken.reset_session_hash == session_hash,
+            PasswordResetToken.otp_verified == True,
+            PasswordResetToken.used == False,
+            PasswordResetToken.expires_at > datetime.now(timezone.utc),
+        )
+    ).scalar_one_or_none()
+
+    if not record:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Session expired or invalid. Please start the reset process again.",
         )
 
     user = db.get(User, record.user_id)
@@ -232,7 +257,6 @@ def reset_password(body: ResetPasswordRequest, db: Session = Depends(get_db)):
     record.used = True
 
     # Revoke all active refresh tokens — forces re-login on all devices
-    # This protects against an attacker who had a valid refresh token
     db.execute(
         update(RefreshToken)
         .where(RefreshToken.user_id == user.id, RefreshToken.revoked == False)
@@ -241,3 +265,4 @@ def reset_password(body: ResetPasswordRequest, db: Session = Depends(get_db)):
 
     db.commit()
     return {"detail": "Password has been reset successfully. Please log in with your new password."}
+
