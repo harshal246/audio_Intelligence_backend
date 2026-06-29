@@ -47,13 +47,20 @@ class RefreshRequest(BaseModel):
 
 
 class ForgotPasswordRequest(BaseModel):
-    # Only the email is needed — we look up the user and send a link to this address
+    # Only the email is needed — we look up the user and send a 6-digit OTP to this address
     email: EmailStr
 
 
+class VerifyOtpRequest(BaseModel):
+    # The email the OTP was sent to — used to look up the record
+    email: EmailStr
+    # 6-digit OTP the user received via email
+    otp: str
+
+
 class ResetPasswordRequest(BaseModel):
-    # One-time token from the URL param in the reset email
-    token: str
+    # Short-lived session token issued after successful OTP verification
+    reset_session_token: str
     # New password — same strength rules as registration for consistency
     new_password: str
 
