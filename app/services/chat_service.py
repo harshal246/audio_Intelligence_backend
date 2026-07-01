@@ -112,12 +112,12 @@ def ask_question(
         ).first()
         if not session:
             # Session ID not found — start fresh rather than erroring
-            session = ChatSession(user_id=user_id, title=question[:50])
+            session = ChatSession(user_id=user_id, title=question[:50], target_date=target_date)
             db.add(session)
             db.commit()
             db.refresh(session)
     else:
-        session = ChatSession(user_id=user_id, title=question[:50])
+        session = ChatSession(user_id=user_id, title=question[:50], target_date=target_date)
         db.add(session)
         db.commit()
         db.refresh(session)
