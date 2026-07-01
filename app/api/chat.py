@@ -1,3 +1,4 @@
+import logging
 from datetime import date, datetime
 from typing import List
 
@@ -11,6 +12,7 @@ from app.schemas.chat import AskRequest, AskResponse, SessionOut, MessageOut
 from app.services.chat_service import ask_question
 from app.utils.auth import get_current_user
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 
@@ -58,11 +60,19 @@ async def list_sessions(
     q = db.query(ChatSession).filter(ChatSession.user_id == current_user.id)
 
     if target_date:
-        start = datetime.combine(target_date, datetime.min.time())
-        end = datetime.combine(target_date, datetime.max.time())
-        q = q.filter(ChatSession.created_at >= start, ChatSession.created_at <= end)
+        q = q.filter(ChatSession.target_date == target_date)
 
     sessions = q.order_by(ChatSession.created_at.desc()).all()
+    logger.info("[Sessions] user_id=%s target_date=%s found=%d", current_user.id, target_date, len(sessions))
+    if target_date:
+        # Debug: check what's in the table for this user
+        all_sessions = db.query(ChatSession).filter(ChatSession.user_id == current_user.id).all()
+        logger.info("[Sessions] All sessions for this user: %s",
+            [(str(s.id)[:8], str(s.target_date), str(s.user_id)[:8]) for s in all_sessions])
+        # Also check ALL sessions in table regardless of user
+        all_any = db.query(ChatSession).all()
+        logger.info("[Sessions] ALL sessions in DB: %s",
+            [(str(s.id)[:8], str(s.target_date), str(s.user_id)[:8]) for s in all_any])
 
     result = []
     for s in sessions:
