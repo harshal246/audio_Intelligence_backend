@@ -235,13 +235,6 @@ async def transcribe_simple(
             detail="Must provide either audio file or transcript_text",
         )
 
-    # Clean up local file after successful processing (only when Cloudinary handled storage)
-    if final_path and settings.USE_CLOUDINARY:
-        try:
-            os.remove(final_path)
-        except Exception:
-            pass
-
     # ── Summary & Title Extraction ───────────────────────────────────────────
     if generate_summary or title is None:
         import uuid
