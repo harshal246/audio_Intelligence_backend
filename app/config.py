@@ -44,6 +44,9 @@ class Settings(BaseSettings):
     CLOUDINARY_API_KEY: str = ""
     CLOUDINARY_API_SECRET: str = ""
 
+    # Redis connection URL for Celery broker/backend
+    REDIS_URL: str = "redis://localhost:6379/0"
+
     # Tell pydantic to read values from the .env file at project root
     model_config = {"env_file": ".env"}
 

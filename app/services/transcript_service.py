@@ -265,7 +265,17 @@ def transcribe_simple_audio(
         Dict containing transcript_id and the full segments list
     """
     logger.info("Simple Gemini transcription (no diarization) for: %s", audio_filename)
-    result = transcribe_audio_gemini(audio_path)
+    try:
+        result = transcribe_audio_gemini(audio_path)
+    finally:
+        import os
+        if audio_path and os.path.exists(audio_path):
+            try:
+                os.remove(audio_path)
+                logger.info("Deleted raw audio file post-transcription: %s", audio_path)
+            except Exception as e:
+                logger.error("Failed to delete raw audio file %s: %s", audio_path, e)
+
 
     segments = []
     for seg in result.get("segments", []):

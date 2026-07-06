@@ -17,7 +17,7 @@ from app.schemas.auth import (
     RegisterRequest, LoginRequest, AuthResponse,
     RefreshRequest, ForgotPasswordRequest, VerifyOtpRequest, ResetPasswordRequest,
 )
-from app.utils.auth import hash_password, verify_password, create_access_token, create_refresh_token
+from app.utils.auth import hash_password, verify_password, create_access_token, create_refresh_token, get_current_user
 from app.utils.email import send_otp_email
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -265,4 +265,59 @@ def reset_password(body: ResetPasswordRequest, db: Session = Depends(get_db)):
 
     db.commit()
     return {"detail": "Password has been reset successfully. Please log in with your new password."}
+
+
+@router.delete("/account", status_code=status.HTTP_200_OK)
+def delete_account(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """
+    Permanently delete the user account and all associated data.
+    """
+    from app.models.transcript import Transcript
+    from app.models.summary import Summary
+    from app.models.chat import ChatSession, ChatMessage
+    from app.models.transcript_embedding import TranscriptEmbedding
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    user_id = current_user.id
+    logger.info("Initiating full data purge for user: %s", user_id)
+    
+    try:
+        # Delete embeddings
+        db.query(TranscriptEmbedding).filter(TranscriptEmbedding.user_id == user_id).delete(synchronize_session=False)
+        
+        # Delete summaries
+        db.query(Summary).filter(Summary.user_id == user_id).delete(synchronize_session=False)
+        
+        # Delete chat messages related to user sessions
+        user_sessions = db.query(ChatSession.id).filter(ChatSession.user_id == user_id).all()
+        session_ids = [s.id for s in user_sessions]
+        if session_ids:
+            db.query(ChatMessage).filter(ChatMessage.session_id.in_(session_ids)).delete(synchronize_session=False)
+            db.query(ChatSession).filter(ChatSession.user_id == user_id).delete(synchronize_session=False)
+            
+        # Delete transcripts
+        db.query(Transcript).filter(Transcript.user_id == user_id).delete(synchronize_session=False)
+        
+        # Delete auth tokens
+        db.query(RefreshToken).filter(RefreshToken.user_id == user_id).delete(synchronize_session=False)
+        db.query(PasswordResetToken).filter(PasswordResetToken.user_id == user_id).delete(synchronize_session=False)
+        
+        # Delete user record
+        db.query(User).filter(User.id == user_id).delete(synchronize_session=False)
+        
+        db.commit()
+        logger.info("Successfully completed full data purge for user: %s", user_id)
+        
+        return {
+            "status": "success",
+            "message": "Your account and all associated data have been permanently deleted."
+        }
+    except Exception as e:
+        db.rollback()
+        logger.error("Failed to purge account for user %s: %s", user_id, str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"An error occurred during account deletion: {str(e)}"
+        )
 
