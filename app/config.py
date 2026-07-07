@@ -37,12 +37,12 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str  # Google Gemini API key
     GEMINI_MODEL: str = "gemini-3.1-flash-lite"  # Model: gemini-2.5-flash (fast) or gemini-2.5-pro (quality)
 
-    # Cloudinary settings
-    # Set USE_CLOUDINARY=false in .env to skip cloud upload and keep files local
-    USE_CLOUDINARY: bool = False
-    CLOUDINARY_CLOUD_NAME: str = ""
-    CLOUDINARY_API_KEY: str = ""
-    CLOUDINARY_API_SECRET: str = ""
+    # AWS S3 Storage settings
+    USE_S3: bool = False
+    AWS_ACCESS_KEY_ID: str = ""
+    AWS_SECRET_ACCESS_KEY: str = ""
+    AWS_REGION: str = "us-east-1"
+    AWS_S3_BUCKET: str = ""
 
     # Redis connection URL for Celery broker/backend
     REDIS_URL: str = "redis://localhost:6379/0"
