@@ -35,6 +35,7 @@ async def get_transcripts(
     Retrieve all transcripts for the current user.
     Includes the transcript's summary IF a custom summary was generated 
     specifically (and only) for this transcript.
+    Audio URLs are returned as time-limited presigned URLs (1 hour).
     """
     transcripts = db.query(Transcript).filter(
         Transcript.user_id == current_user.id
@@ -55,14 +56,24 @@ async def get_transcripts(
                 "created_at": s.created_at.isoformat() if s.created_at else None
             }
 
+    # Generate presigned URLs for S3 audio files
+    if settings.USE_S3:
+        from app.services.s3_service import generate_presigned_url
+
     result = []
     for t in transcripts:
         t_id = str(t.id)
+
+        # Convert stored S3 URL to a presigned URL the frontend can access
+        audio_url = t.audio_url
+        if settings.USE_S3 and audio_url:
+            audio_url = generate_presigned_url(audio_url)
+
         result.append({
             "transcript_id": t_id,
             "title": t.title,
             "audio_filename": t.audio_filename,
-            "audio_url": t.audio_url,
+            "audio_url": audio_url,
             "processing_timestamp": t.processing_timestamp.isoformat() if t.processing_timestamp else None,
             "summary": summary_map.get(t_id)
         })
@@ -83,7 +94,7 @@ async def transcribe_simple(
     audio_filename: Optional[str] = Form(default=None),
     transcript_id: Optional[str] = Query(default=None, description="Optional ID of an existing transcript to append to"),
     generate_summary: bool = Query(default=False, description="If true, generate a preview summary after saving and return it in the same response."),
-    is_last_chunk: bool = Query(default=True, description="Set to false for intermediate chunks — skips Cloudinary upload. Set to true (default) on the final chunk to upload the audio to cloud storage."),
+    is_last_chunk: bool = Query(default=True, description="Set to false for intermediate chunks — skips S3 upload. Set to true (default) on the final chunk to upload the audio to S3 storage."),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -99,15 +110,15 @@ async def transcribe_simple(
     - **audio_filename** (str):     Display name for text-only transcripts. Defaults to 'manual_entry.txt'.
     - **generate_summary** (bool):  If true, generates a summary and saves it to the database.
     - **is_last_chunk** (bool):     Set to false for all intermediate audio chunks — skips
-                                    Cloudinary upload (transcription still happens and is appended).
+                                    S3 upload (transcription still happens and is appended).
                                     Set to true (or omit) on the final chunk to upload the audio
-                                    to cloud storage and save the URL to the transcript record.
+                                    to S3 storage and save the URL to the transcript record.
     """
 
     audio_url = None
     final_path = None
 
-    # ── Upload Audio to Cloudinary if provided ─────────────────────────────────
+    # ── Upload Audio to S3 if provided ─────────────────────────────────
     if audio is not None:
         SUPPORTED_FORMATS = ('.wav', '.mp3', '.m4a', '.flac', '.ogg', '.aac', '.wma', '.webm', '.mp4')
         file_ext = Path(audio.filename).suffix.lower()
@@ -147,16 +158,16 @@ async def transcribe_simple(
         else:
             final_path = str(original_path)
 
-        # Upload to Cloudinary ONLY on the last chunk AND if USE_CLOUDINARY is enabled
-        if is_last_chunk and settings.USE_CLOUDINARY:
+        # Upload to S3 ONLY on the last chunk AND if USE_S3 is enabled
+        if is_last_chunk and settings.USE_S3:
             try:
-                from app.services.cloudinary_service import upload_audio_to_cloudinary
-                custom_id = f"user_{current_user.id}_{Path(final_path).stem}"
+                from app.services.s3_service import upload_audio_to_s3
+                custom_key = f"user_{current_user.id}/{Path(final_path).name}"
 
                 upload_result = await run_in_threadpool(
-                    upload_audio_to_cloudinary,
+                    upload_audio_to_s3,
                     final_path,
-                    custom_id
+                    custom_key
                 )
                 audio_url = upload_result["url"]
             except Exception as e:
@@ -167,9 +178,9 @@ async def transcribe_simple(
                     pass
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail=f"Failed to upload audio to cloud storage: {str(e)}"
+                    detail=f"Failed to upload audio to S3 storage: {str(e)}"
                 )
-        elif is_last_chunk and not settings.USE_CLOUDINARY:
+        elif is_last_chunk and not settings.USE_S3:
             # Local storage mode — keep the file on disk; store relative path as the URL
             audio_url = str(final_path)
 
