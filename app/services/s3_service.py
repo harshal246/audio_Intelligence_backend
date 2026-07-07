@@ -95,3 +95,36 @@ def generate_presigned_url(audio_url: str, expiration: int = 3600) -> str:
     except Exception as e:
         logger.error(f"Failed to generate presigned URL: {str(e)}")
         return audio_url
+
+
+def delete_audio_from_s3(audio_url: str) -> bool:
+    """
+    Deletes an audio file from AWS S3 based on its stored URL.
+    """
+    if not audio_url or "s3" not in audio_url:
+        return False
+
+    try:
+        prefix = f"https://{settings.AWS_S3_BUCKET}.s3.{settings.AWS_REGION}.amazonaws.com/"
+        if audio_url.startswith(prefix):
+            s3_key = audio_url[len(prefix):]
+        else:
+            return False
+
+        s3_client = boto3.client(
+            's3',
+            aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+            aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+            region_name=settings.AWS_REGION
+        )
+
+        s3_client.delete_object(
+            Bucket=settings.AWS_S3_BUCKET,
+            Key=s3_key
+        )
+        logger.info(f"Successfully deleted {s3_key} from S3")
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to delete {audio_url} from S3: {str(e)}")
+        return False
