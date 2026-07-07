@@ -44,6 +44,9 @@ class Settings(BaseSettings):
     AWS_REGION: str = "us-east-1"
     AWS_S3_BUCKET: str = ""
 
+    # Encryption key for sending secrets to frontend
+    ENCRYPTION_KEY: str = "your-32-byte-secret-key-12345678"
+
     # Redis connection URL for Celery broker/backend
     REDIS_URL: str = "redis://localhost:6379/0"
 

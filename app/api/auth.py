@@ -296,6 +296,13 @@ def delete_account(current_user: User = Depends(get_current_user), db: Session =
             db.query(ChatMessage).filter(ChatMessage.session_id.in_(session_ids)).delete(synchronize_session=False)
             db.query(ChatSession).filter(ChatSession.user_id == user_id).delete(synchronize_session=False)
             
+        # Delete audio from S3 for all user transcripts
+        from app.services.s3_service import delete_audio_from_s3
+        user_transcripts = db.query(Transcript).filter(Transcript.user_id == user_id).all()
+        for transcript in user_transcripts:
+            if transcript.audio_url:
+                delete_audio_from_s3(transcript.audio_url)
+
         # Delete transcripts
         db.query(Transcript).filter(Transcript.user_id == user_id).delete(synchronize_session=False)
         
@@ -303,8 +310,6 @@ def delete_account(current_user: User = Depends(get_current_user), db: Session =
         db.query(RefreshToken).filter(RefreshToken.user_id == user_id).delete(synchronize_session=False)
         db.query(PasswordResetToken).filter(PasswordResetToken.user_id == user_id).delete(synchronize_session=False)
         
-        # Delete user record
-        db.query(User).filter(User.id == user_id).delete(synchronize_session=False)
         
         db.commit()
         logger.info("Successfully completed full data purge for user: %s", user_id)

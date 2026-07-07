@@ -7,6 +7,7 @@ from app.api.auth import router as auth_router
 from app.api.transcript import router as transcript_router
 from app.api.summary import router as summary_router
 from app.api.chat import router as chat_router
+from app.api.config import router as config_router
 from app.database.db import Base, engine
 from app.jobs.cleanup import clean_expired_revoked_tokens
 from app.middleware import TokenInfoMiddleware
@@ -44,3 +45,4 @@ app.include_router(auth_router)
 app.include_router(transcript_router)
 app.include_router(summary_router)
 app.include_router(chat_router)
+app.include_router(config_router)

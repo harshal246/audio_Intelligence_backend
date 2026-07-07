@@ -322,6 +322,14 @@ async def delete_transcript(
         if s.transcript_ids and t_uuid in s.transcript_ids:
             db.delete(s)
             
+    # Delete audio from S3 if it exists
+    if settings.USE_S3 and transcript.audio_url:
+        from app.services.s3_service import delete_audio_from_s3
+        import asyncio
+        from fastapi.concurrency import run_in_threadpool
+        # Run S3 deletion in threadpool so it doesn't block the async event loop
+        await run_in_threadpool(delete_audio_from_s3, transcript.audio_url)
+            
     # Delete the transcript itself
     db.delete(transcript)
     db.commit()
