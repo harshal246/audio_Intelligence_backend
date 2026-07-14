@@ -335,3 +335,37 @@ async def delete_transcript(
     db.commit()
     
     return {"status": "success", "message": "Transcript and related data deleted successfully"}
+
+@router.get("/{transcript_id}", status_code=status.HTTP_200_OK)
+def get_transcript(
+    transcript_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get a single transcript by ID, including its full text data.
+    """
+    import uuid
+    try:
+        t_uuid = uuid.UUID(transcript_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid transcript ID")
+        
+    transcript = db.query(Transcript).filter(
+        Transcript.id == t_uuid,
+        Transcript.user_id == current_user.id
+    ).first()
+    
+    if not transcript:
+        raise HTTPException(status_code=404, detail="Transcript not found")
+        
+    return {
+        "status": "success",
+        "transcript": {
+            "transcript_id": str(transcript.id),
+            "title": transcript.title,
+            "audio_filename": transcript.audio_filename,
+            "full_transcript_data": transcript.full_transcript_data,
+            "processing_timestamp": transcript.processing_timestamp.isoformat() if transcript.processing_timestamp else None
+        }
+    }
