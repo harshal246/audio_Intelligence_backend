@@ -1,7 +1,9 @@
 from contextlib import asynccontextmanager
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+import os
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from app.api.auth import router as auth_router
 from app.api.transcript import router as transcript_router
@@ -27,6 +29,11 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Audio Intelligence Platform", version="1.0.0", lifespan=lifespan)
+
+# Ensure the uploads directory exists
+os.makedirs("uploads", exist_ok=True)
+# Mount the uploads directory to serve static audio files
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 # Add CORS middleware
 app.add_middleware(
