@@ -11,9 +11,15 @@ from app.api.summary import router as summary_router
 from app.api.chat import router as chat_router
 from app.api.config import router as config_router
 from app.database.db import Base, engine
+from sqlalchemy import text
 from app.jobs.cleanup import clean_expired_revoked_tokens
 from app.middleware import TokenInfoMiddleware
 from fastapi.middleware.cors import CORSMiddleware
+
+# Enable pgvector extension before creating tables
+with engine.connect() as conn:
+    conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+    conn.commit()
 
 Base.metadata.create_all(bind=engine)
 

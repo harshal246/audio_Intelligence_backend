@@ -51,7 +51,7 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379/0"
 
     # Tell pydantic to read values from the .env file at project root
-    model_config = {"env_file": ".env"}
+    model_config = {"env_file": ".env", "extra": "ignore"}
 
 
 # Single global instance — imported everywhere else

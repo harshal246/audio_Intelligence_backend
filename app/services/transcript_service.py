@@ -251,10 +251,11 @@ def transcribe_simple_audio(
 ) -> Dict:
     """
     Transcribe audio with Gemini only — no diarization, no speaker labels.
-    Saves the result to the database immediately.
+    Automatically chunks audio longer than 15 minutes to avoid Gemini's
+    output token limit.
 
     Args:
-        audio_path:     Path to the WAV file to transcribe
+        audio_path:     Path to the audio file to transcribe
         audio_filename: Original filename for the DB record
         user_id:        Authenticated user's UUID
         db:             Active SQLAlchemy session
@@ -264,11 +265,67 @@ def transcribe_simple_audio(
     Returns:
         Dict containing transcript_id and the full segments list
     """
+    from app.services.preprocessing_service import get_audio_duration_minutes, chunk_audio, cleanup_chunks
+
+    CHUNK_THRESHOLD_MINUTES = 15  # Chunk audio longer than this
+
     logger.info("Simple Gemini transcription (no diarization) for: %s", audio_filename)
+
     try:
-        result = transcribe_audio_gemini(audio_path)
+        duration_minutes = get_audio_duration_minutes(audio_path)
+        logger.info("Audio duration: %.1f minutes", duration_minutes)
+
+        if duration_minutes > CHUNK_THRESHOLD_MINUTES:
+            # ── Chunked transcription for long audio ─────────────────────────
+            logger.info(
+                "Audio exceeds %d min — splitting into chunks for Gemini.",
+                CHUNK_THRESHOLD_MINUTES,
+            )
+            chunks = chunk_audio(audio_path, chunk_minutes=CHUNK_THRESHOLD_MINUTES)
+            logger.info("Created %d chunk(s)", len(chunks))
+
+            all_segments = []
+            for idx, (chunk_path, offset_seconds) in enumerate(chunks):
+                logger.info(
+                    "Transcribing chunk %d/%d (offset=%.1fs): %s",
+                    idx + 1, len(chunks), offset_seconds, chunk_path,
+                )
+                try:
+                    chunk_result = transcribe_audio_gemini(chunk_path)
+                except Exception as e:
+                    logger.error("Chunk %d transcription failed: %s", idx + 1, e)
+                    continue  # Skip failed chunk, keep the rest
+
+                for seg in chunk_result.get("segments", []):
+                    text = seg.get("text", "").strip()
+                    if not text:
+                        continue
+                    all_segments.append({
+                        "speaker": seg.get("speaker", "SPEAKER"),
+                        "start_time": seg.get("start", 0.0) + offset_seconds,
+                        "end_time": seg.get("end", 0.0) + offset_seconds,
+                        "text": text,
+                    })
+
+            # Clean up chunk files
+            cleanup_chunks()
+            segments = all_segments
+        else:
+            # ── Single-shot transcription for short audio ────────────────────
+            result = transcribe_audio_gemini(audio_path)
+            segments = []
+            for seg in result.get("segments", []):
+                text = seg.get("text", "").strip()
+                if not text:
+                    continue
+                segments.append({
+                    "speaker": seg.get("speaker", "SPEAKER"),
+                    "start_time": seg.get("start", 0.0),
+                    "end_time": seg.get("end", 0.0),
+                    "text": text,
+                })
     finally:
-        import os
+        # Always clean up the original audio file
         if audio_path and os.path.exists(audio_path):
             try:
                 os.remove(audio_path)
@@ -276,20 +333,8 @@ def transcribe_simple_audio(
             except Exception as e:
                 logger.error("Failed to delete raw audio file %s: %s", audio_path, e)
 
-
-    segments = []
-    for seg in result.get("segments", []):
-        text = seg.get("text", "").strip()
-        if not text:
-            continue
-        segments.append({
-            "speaker": "SPEAKER",
-            "start_time": seg.get("start", 0.0),
-            "end_time": seg.get("end", 0.0),
-            "text": text,
-        })
-
     return save_simple_transcript(db, user_id, audio_filename, segments, transcript_id, title, audio_url, trigger_embeddings=trigger_embeddings)
+
 
 
 def trigger_embeddings_background(transcript_id: str) -> None:
