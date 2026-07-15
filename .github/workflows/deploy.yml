@@ -68,7 +68,7 @@ jobs:
             cd ~/app
 
             # Write the .env file from GitHub Secrets
-            cat > .env <<EOF
+            cat > .env <<'EOF'
             DATABASE_URL=postgresql://postgres:${{ secrets.POSTGRES_PASSWORD }}@db:5432/audio_intelligence
             POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
             SECRET_KEY=${{ secrets.SECRET_KEY }}
