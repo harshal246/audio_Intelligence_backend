@@ -31,8 +31,9 @@ def transcribe_audio_gemini(audio_path: str) -> Dict:
         You are an audio transcription assistant. Transcribe the following audio file.
         Return the transcription as a JSON object matching the required schema.
 
-        Note: Since this is a transcription task, please provide the actual transcribed text
-        and reasonable timestamps for each segment in total seconds. Do NOT include speaker information.
+        Note: Please provide the actual transcribed text and reasonable timestamps for each segment in total seconds.
+        Additionally, perform speaker diarization by identifying different speakers in the conversation and labeling 
+        them consistently (e.g., "SPEAKER_1", "SPEAKER_2", etc.) in the "speaker" field.
         CRITICAL: The "start" and "end" timestamps MUST be valid floating point values in total seconds
         (e.g., 60.5 for 1 minute and 0.5 seconds). DO NOT use formatted strings or multiple decimals like 1.0.66.
         """
@@ -60,6 +61,10 @@ def transcribe_audio_gemini(audio_path: str) -> Dict:
                                 "type": "object",
                                 "properties": {
                                     "text": {"type": "string"},
+                                    "speaker": {
+                                        "type": "string",
+                                        "description": "The speaker identifier label, e.g. SPEAKER_1, SPEAKER_2",
+                                    },
                                     "start": {
                                         "type": "number",
                                         "description": "Start time in total seconds as a float (e.g. 60.5 for 1m0.5s)",
@@ -69,7 +74,7 @@ def transcribe_audio_gemini(audio_path: str) -> Dict:
                                         "description": "End time in total seconds as a float (e.g. 63.2 for 1m3.2s)",
                                     },
                                 },
-                                "required": ["text", "start", "end"],
+                                "required": ["text", "speaker", "start", "end"],
                             },
                         },
                     },
@@ -88,20 +93,34 @@ def transcribe_audio_gemini(audio_path: str) -> Dict:
                 "Primary JSON parse failed (%s) — attempting segment recovery...", primary_err
             )
             # ── Truncation-recovery: extract every complete segment object ──────
-            # Matches complete {"text": "...", "start": N, "end": N} blocks.
-            segment_pattern = re.compile(
-                r'\{\s*"text"\s*:\s*"(?P<text>(?:[^"\\]|\\.)*)"\s*,'
-                r'\s*"start"\s*:\s*(?P<start>-?\d+(?:\.\d+)?)\s*,'
-                r'\s*"end"\s*:\s*(?P<end>-?\d+(?:\.\d+)?)\s*\}',
-                re.DOTALL,
-            )
+            # Find all complete JSON objects that contain a "text" key.
+            # This handles any field order (text/speaker/start/end).
+            brace_depth = 0
+            obj_start = None
             recovered_segments = []
-            for m in segment_pattern.finditer(raw_text):
-                recovered_segments.append({
-                    "text": m.group("text"),
-                    "start": float(m.group("start")),
-                    "end": float(m.group("end")),
-                })
+            for i, ch in enumerate(raw_text):
+                if ch == '{':
+                    if brace_depth == 1 and obj_start is None:
+                        obj_start = i  # start of a segment-level object
+                    elif brace_depth == 0:
+                        pass  # top-level object, skip
+                    brace_depth += 1
+                elif ch == '}':
+                    brace_depth -= 1
+                    if brace_depth == 1 and obj_start is not None:
+                        candidate = raw_text[obj_start:i+1]
+                        try:
+                            seg = json.loads(candidate)
+                            if "text" in seg:
+                                recovered_segments.append({
+                                    "text": seg.get("text", ""),
+                                    "speaker": seg.get("speaker", "SPEAKER"),
+                                    "start": float(seg.get("start", 0)),
+                                    "end": float(seg.get("end", 0)),
+                                })
+                        except (json.JSONDecodeError, ValueError):
+                            pass
+                        obj_start = None
 
             if recovered_segments:
                 logger.warning(
@@ -117,9 +136,7 @@ def transcribe_audio_gemini(audio_path: str) -> Dict:
                 client.files.delete(name=audio_file_obj.name)
                 raise primary_err
 
-        # Strip any speaker fields Gemini may have hallucinated
-        for segment in result.get("segments", []):
-            segment.pop("speaker", None)
+        # Keep speaker fields returned by Gemini
 
         logger.info(
             "Gemini transcription complete — %d segment(s), language: %s",

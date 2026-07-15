@@ -99,10 +99,10 @@ async def transcribe_simple(
     db: Session = Depends(get_db),
 ):
     """
-    Lightweight transcript save — no diarization, no speaker detection.
+    Lightweight transcript save — uses Gemini for transcription and speaker diarization.
 
     Two modes (supply exactly one):
-    - **audio** (file):          Uploads audio, transcribes via Gemini, saves to DB.
+    - **audio** (file):          Uploads audio, transcribes & diarizes via Gemini, saves to DB.
     - **transcript_text** (str): Saves the provided plain text directly to DB.
 
     Optional fields:
@@ -234,7 +234,7 @@ async def transcribe_simple(
 
         response = {
             "status": "success",
-            "message": "Audio transcribed and saved (no diarization).",
+            "message": "Audio transcribed and saved with Gemini diarization.",
             "audio_filename": audio.filename,
             "transcript_id": saved_transcript_id,
             "segment_count": len(segments),
