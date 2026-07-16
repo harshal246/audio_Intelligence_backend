@@ -336,27 +336,3 @@ def transcribe_simple_audio(
     return save_simple_transcript(db, user_id, audio_filename, segments, transcript_id, title, audio_url, trigger_embeddings=trigger_embeddings)
 
 
-
-def trigger_embeddings_background(transcript_id: str) -> None:
-    """
-    Background task to fetch the transcript and trigger its embeddings
-    using a new DB session to prevent cross-thread session issues.
-    """
-    logger.info("Starting background embedding generation for transcript %s", transcript_id)
-    from app.database.db import SessionLocal
-    from app.models.transcript import Transcript
-    import uuid
-
-    db = SessionLocal()
-    try:
-        t_uuid = uuid.UUID(transcript_id) if isinstance(transcript_id, str) else transcript_id
-        transcript = db.query(Transcript).filter(Transcript.id == t_uuid).first()
-        if transcript:
-            _trigger_embeddings(db, transcript)
-            logger.info("Successfully completed background embedding generation for transcript %s", transcript_id)
-        else:
-            logger.error("Transcript %s not found in background task", transcript_id)
-    except Exception as e:
-        logger.exception("Failed generating embeddings in background for transcript %s", transcript_id)
-    finally:
-        db.close()

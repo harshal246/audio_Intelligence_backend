@@ -31,9 +31,26 @@ services:
 
   # ── Development Services ────────────────────────────────────────────────
   # Usage: docker compose --profile dev up
+  celery_worker:
+    profiles: ["dev"]
+    image: audio_intelligence_app:latest
+    container_name: audio_intelligence_worker
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/audio_intelligence
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - db
+      - redis
+    command: celery -A app.celery_app worker --loglevel=info
+
   api:
     profiles: ["dev"]
     build: .
+    image: audio_intelligence_app:latest
     container_name: audio_intelligence_api
     ports:
       - "8000:8000"
@@ -49,40 +66,25 @@ services:
       - redis
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
-  celery_worker:
-    profiles: ["dev"]
-    build: .
-    container_name: audio_intelligence_worker
-    volumes:
-      - .:/app
-    env_file:
-      - .env
-    environment:
-      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/audio_intelligence
-      - REDIS_URL=redis://redis:6379/0
-    depends_on:
-      - db
-      - redis
-    command: celery -A app.celery_app worker --loglevel=info
-
-  celery_beat:
-    profiles: ["dev"]
-    build: .
-    container_name: audio_intelligence_beat
-    volumes:
-      - .:/app
-    env_file:
-      - .env
-    environment:
-      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/audio_intelligence
-      - REDIS_URL=redis://redis:6379/0
-    depends_on:
-      - db
-      - redis
-    command: celery -A app.celery_app beat --loglevel=info
-
   # ── Production Services ─────────────────────────────────────────────────
   # Usage: docker compose --profile prod up -d
+  celery_worker_prod:
+    profiles: ["prod"]
+    image: ${DOCKERHUB_USERNAME}/audio-intelligence:latest
+    container_name: audio_intelligence_worker
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/audio_intelligence
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: always
+    command: celery -A app.celery_app worker --loglevel=info --concurrency=2
+
   api_prod:
     profiles: ["prod"]
     image: ${DOCKERHUB_USERNAME}/audio-intelligence:latest
@@ -101,40 +103,6 @@ services:
         condition: service_started
     restart: always
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2 --timeout-keep-alive 7200
-
-  celery_worker_prod:
-    profiles: ["prod"]
-    image: ${DOCKERHUB_USERNAME}/audio-intelligence:latest
-    container_name: audio_intelligence_worker
-    env_file:
-      - .env
-    environment:
-      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/audio_intelligence
-      - REDIS_URL=redis://redis:6379/0
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_started
-    restart: always
-    command: celery -A app.celery_app worker --loglevel=info --concurrency=2
-
-  celery_beat_prod:
-    profiles: ["prod"]
-    image: ${DOCKERHUB_USERNAME}/audio-intelligence:latest
-    container_name: audio_intelligence_beat
-    env_file:
-      - .env
-    environment:
-      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/audio_intelligence
-      - REDIS_URL=redis://redis:6379/0
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_started
-    restart: always
-    command: celery -A app.celery_app beat --loglevel=info
 
   nginx:
     profiles: ["prod"]
