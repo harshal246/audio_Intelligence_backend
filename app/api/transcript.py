@@ -15,8 +15,8 @@ from app.services.transcript_service import (
     format_transcript_output,
     save_simple_transcript,
     transcribe_simple_audio,
-    trigger_embeddings_background
 )
+from app.jobs.embeddings import generate_embeddings
 from app.services.summary_service import generate_preview_summary
 from app.utils.auth import get_current_user
 
@@ -283,8 +283,7 @@ async def transcribe_simple(
                 "summary_text": new_summary.summary_text
             }
 
-    # Trigger embedding generation in a background task to prevent blocking the HTTP response
-    background_tasks.add_task(trigger_embeddings_background, saved_transcript_id)
+    generate_embeddings.delay(saved_transcript_id)
 
     return response
 
