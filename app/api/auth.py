@@ -310,6 +310,8 @@ def delete_account(current_user: User = Depends(get_current_user), db: Session =
         db.query(RefreshToken).filter(RefreshToken.user_id == user_id).delete(synchronize_session=False)
         db.query(PasswordResetToken).filter(PasswordResetToken.user_id == user_id).delete(synchronize_session=False)
         
+        # Delete the user account itself so the user can no longer log in
+        db.delete(current_user)
         
         db.commit()
         logger.info("Successfully completed full data purge for user: %s", user_id)
