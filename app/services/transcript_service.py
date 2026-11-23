@@ -220,11 +220,13 @@ def _trigger_embeddings(db: Session, transcript: Transcript) -> None:
             text = seg.get("text", "").strip()
             if not text:
                 continue
+            speaker = seg.get("speaker")
+            speaker_prefix = f"{speaker}: " if speaker else ""
             ts = seg.get("start_time")
             if ts is not None:
-                text_parts.append(f"[{_seconds_to_timestamp(float(ts))}] {text}")
+                text_parts.append(f"[{_seconds_to_timestamp(float(ts))}] {speaker_prefix}{text}")
             else:
-                text_parts.append(text)
+                text_parts.append(f"{speaker_prefix}{text}")
         
         full_text = " ".join(text_parts)
         

@@ -136,7 +136,7 @@ def ask_question(
         .all()
     )
 
-    # ── RAG: semantic vector search ───────────────────────────────────────────
+    # ── RAG: semantic vector search with fallback ─────────────────────────────
     try:
         from app.services.embedding_service import vector_search
         context_chunks = vector_search(db, user_id, question, target_date=target_date)
@@ -147,6 +147,34 @@ def ask_question(
     except Exception as e:
         logger.warning("Vector search failed, answering without context: %s", e)
         context_chunks = []
+
+    # If vector search yielded nothing (e.g., embeddings not generated yet), fall back to fetching raw transcripts
+    if not context_chunks:
+        try:
+            from app.models.transcript import Transcript
+            from datetime import datetime
+            q = db.query(Transcript).filter(Transcript.user_id == user_id)
+            if target_date:
+                start = datetime.combine(target_date, datetime.min.time())
+                end = datetime.combine(target_date, datetime.max.time())
+                q = q.filter(Transcript.processing_timestamp >= start, Transcript.processing_timestamp <= end)
+            transcripts = q.order_by(Transcript.processing_timestamp.desc()).limit(5).all()
+            
+            fallback_chunks = []
+            for t in transcripts:
+                seg_lines = []
+                for s in (t.full_transcript_data or []):
+                    if isinstance(s, dict):
+                        speaker = s.get('speaker', '')
+                        text = s.get('text', '')
+                        spk_prefix = f"{speaker}: " if speaker else ""
+                        seg_lines.append(f"{spk_prefix}{text}")
+                t_body = "\n".join(seg_lines) if seg_lines else (t.summary_text or "")
+                dt_str = t.processing_timestamp.strftime("%Y-%m-%d") if t.processing_timestamp else ""
+                fallback_chunks.append(f"[Transcript Date: {dt_str}, Title: {t.title or 'Untitled'}]\n{t_body}")
+            context_chunks = fallback_chunks
+        except Exception as fallback_err:
+            logger.warning("Fallback transcript query failed: %s", fallback_err)
 
     # ── Generate answer ───────────────────────────────────────────────────────
     try:
